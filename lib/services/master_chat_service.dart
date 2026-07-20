@@ -14,6 +14,9 @@ class MasterChatService {
 
   Future<Map<String, dynamic>> sendMessage(String text) async {
     try {
+      print('🔵 Отправляем сообщение: "$text"');
+      print('🔵 URL: $_baseUrl/chat');
+
       final uri = Uri.parse('$_baseUrl/chat');
       final body = jsonEncode({'message': text});
 
@@ -25,9 +28,14 @@ class MasterChatService {
         })
         ..body = body;
 
+      print('🔵 Заголовки: ${request.headers}');
+
       final response = await request.send();
 
+      print('🔵 Статус ответа: ${response.statusCode}');
+
       if (response.statusCode != 200) {
+        print('🔴 Ошибка сервера: ${response.statusCode}');
         throw Exception('Ошибка сервера: ${response.statusCode}');
       }
 
@@ -74,6 +82,7 @@ class MasterChatService {
                 continue;
               }
             } catch (e) {
+              print('🔴 ИСКЛЮЧЕНИЕ: $e');
               // Если JSON невалидный — пропускаем
               continue;
             }
