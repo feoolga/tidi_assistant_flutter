@@ -1,0 +1,14 @@
+# This file will be recreated at the next build. To avoid this, delete this line.
+
+[Desktop Entry]
+Type=Application
+Name=tidi_assistant_flutter
+Comment=A new Flutter project.
+Icon=com.example.tidi_assistant_flutter
+Exec=/usr/bin/com.example.tidi_assistant_flutter
+X-Nemo-Application-Type=silica-qt5
+
+[X-Application]
+Permissions=
+OrganizationName=com.example
+ApplicationName=tidi_assistant_flutter
