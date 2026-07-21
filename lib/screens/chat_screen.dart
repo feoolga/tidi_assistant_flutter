@@ -161,10 +161,10 @@ class _ChatScreenState extends State<ChatScreen> {
             if (_currentAgentId != null)
               Text(
                 'ID: $_currentAgentId',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.normal,
-                  opacity: 0.6,
+                  color: Colors.grey[600],
                 ),
               ),
           ],

@@ -81,6 +81,11 @@ class MasterChatService {
 
       print('🔵 Статус ответа: ${response.statusCode}');
 
+      print('🔵 ВСЕ заголовки ответа:');
+      response.headers.forEach((key, value) {
+        print('   $key: $value');
+      });
+
       if (response.statusCode != 200) {
         print('🔴 Ошибка сервера: ${response.statusCode}');
         throw Exception('Ошибка сервера: ${response.statusCode}');
@@ -100,6 +105,8 @@ class MasterChatService {
       String fullText = '';
       String? messageId;
 
+      bool hasMetadata = false;
+
       await for (final chunk in stream) {
         buffer += utf8.decode(chunk);
         final lines = buffer.split('\n');
@@ -107,6 +114,7 @@ class MasterChatService {
 
         for (int i = 0; i < lines.length - 1; i++) {
           final line = lines[i];
+          print('🔵 Строка SSE: $line');
           if (line.startsWith('data: ')) {
             final data = line.substring(6).trim();
 
@@ -118,9 +126,13 @@ class MasterChatService {
 
             try {
               final json = jsonDecode(data) as Map<String, dynamic>;
+              print('🔵 JSON: $json');
 
               // 👇 ПОЛУЧАЕМ AGENT_ID И SESSION_ID ИЗ METADATA (если нет в заголовках)
               if (json.containsKey('type') && json['type'] == 'metadata') {
+
+                hasMetadata = true;
+
                 final metaAgentId = json['agent_id'] as String?;
                 final metaSessionId = json['session_id'] as String?;
                 
@@ -138,7 +150,9 @@ class MasterChatService {
 
               // Собираем токены
               if (json.containsKey('token')) {
-                fullText += json['token'] as String;
+                final token = json['token'] as String;  // ← сначала объявляем переменную token
+                fullText += token;
+                print('🔵 Токен: "$token"');  // ← теперь token существует
                 continue;
               }
 
@@ -154,6 +168,12 @@ class MasterChatService {
           }
         }
       }
+
+      print('🔵 Парсинг SSE завершен');
+      print('🔵 hasMetadata: $hasMetadata');
+      print('🔵 Итоговый agentId: $agentId');
+      print('🔵 Итоговый sessionId: $sessionId');
+      print('🔵 Итоговый текст: ${fullText.substring(0, fullText.length > 50 ? 50 : fullText.length)}...');
 
       // 👇 СОХРАНЯЕМ АГЕНТА И СЕССИЮ ДЛЯ СЛЕДУЮЩИХ ЗАПРОСОВ
       if (agentId != null && sessionId != null) {
