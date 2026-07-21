@@ -108,7 +108,7 @@ class MasterChatService {
       bool hasMetadata = false;
 
       await for (final chunk in stream) {
-        buffer += utf8.decode(chunk);
+        buffer += utf8.decode(chunk, allowMalformed: true);
         final lines = buffer.split('\n');
         buffer = lines.last;
 

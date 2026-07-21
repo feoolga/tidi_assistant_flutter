@@ -158,15 +158,15 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
             // 👇 ПОКАЗЫВАЕМ ID АГЕНТА МЕЛКИМ ШРИФТОМ (для отладки)
-            if (_currentAgentId != null)
-              Text(
-                'ID: $_currentAgentId',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.normal,
-                  color: Colors.grey[600],
-                ),
-              ),
+            // if (_currentAgentId != null)
+            //   Text(
+            //     'ID: $_currentAgentId',
+            //     style: TextStyle(
+            //       fontSize: 10,
+            //       fontWeight: FontWeight.normal,
+            //       color: Colors.grey[600],
+            //     ),
+            //   ),
           ],
         ),
         actions: [
@@ -210,7 +210,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    'Агент: $_currentAgentName',
+                    'Агент: $_currentAgentId',
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.grey[600],
