@@ -184,8 +184,20 @@ class MasterChatService {
         print('⚠️ Не удалось получить agent_id или session_id');
       }
 
+      // 👇 КОСТЫЛЬ!!! ЗАМЕНА ТЕКСТА ПОСЛЕ СБОРКИ ВСЕГО ОТВЕТА
+      String displayText = fullText.trim();
+
+      // Заменяем точную подстроку с переносами
+      const String oldText = '\n\nИсточники:\n';
+      const String newText = '\n\nПроанализированные источники:\n';
+
+      if (displayText.contains(oldText)) {
+        displayText = displayText.replaceAll(oldText, newText);
+        print('🔵 Заменен текст источников на: "Проанализированные источники"');
+      }
+
       return ChatResult(
-        text: fullText.trim(),
+        text: displayText,
         messageId: messageId,
         agentId: agentId,
         sessionId: sessionId,
