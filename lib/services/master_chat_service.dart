@@ -3,19 +3,18 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/message.dart';
-import '../models/agent.dart';
 
 /// Результат отправки сообщения
 class ChatResult {
   /// Текст ответа от AI
   final String text;
-  
+
   /// ID сообщения (для будущего фидбэка)
   final String? messageId;
-  
+
   /// ID агента, который обработал запрос
   final String? agentId;
-  
+
   /// ID сессии (чата) на сервере
   final String? sessionId;
 
@@ -48,20 +47,20 @@ class MasterChatService {
   Future<ChatResult> sendMessage(String text) async {
     try {
       print('🔵 Отправляем сообщение: "$text"');
-      
+
       // Строим URL и тело запроса
       final uri = Uri.parse('$_baseUrl/chat');
-      
+
       // 👇 ФОРМИРУЕМ ТЕЛО ЗАПРОСА
-      final Map<String, dynamic> body = {
-        'message': text,
-      };
-      
+      final Map<String, dynamic> body = {'message': text};
+
       // 👇 ЕСЛИ У НАС УЖЕ ЕСТЬ АГЕНТ И СЕССИЯ - ПЕРЕДАЕМ ИХ
       if (_currentAgentId != null && _currentSessionId != null) {
         body['agent_id'] = _currentAgentId;
         body['session_id'] = _currentSessionId;
-        print('🔵 Продолжаем диалог с агентом: $_currentAgentId, сессия: $_currentSessionId');
+        print(
+          '🔵 Продолжаем диалог с агентом: $_currentAgentId, сессия: $_currentSessionId',
+        );
       } else {
         print('🔵 Новый диалог (агент будет определен сервером)');
       }
@@ -94,7 +93,7 @@ class MasterChatService {
       // 👇 ПОЛУЧАЕМ AGENT_ID И SESSION_ID ИЗ ЗАГОЛОВКОВ
       String? agentId = response.headers['x-agent-id'];
       String? sessionId = response.headers['x-session-id'];
-      
+
       print('🔵 Заголовки ответа:');
       print('   X-Agent-Id: $agentId');
       print('   X-Session-Id: $sessionId');
@@ -130,12 +129,11 @@ class MasterChatService {
 
               // 👇 ПОЛУЧАЕМ AGENT_ID И SESSION_ID ИЗ METADATA (если нет в заголовках)
               if (json.containsKey('type') && json['type'] == 'metadata') {
-
                 hasMetadata = true;
 
                 final metaAgentId = json['agent_id'] as String?;
                 final metaSessionId = json['session_id'] as String?;
-                
+
                 // Если в заголовках не было, берем из metadata
                 if (agentId == null && metaAgentId != null) {
                   agentId = metaAgentId;
@@ -150,9 +148,11 @@ class MasterChatService {
 
               // Собираем токены
               if (json.containsKey('token')) {
-                final token = json['token'] as String;  // ← сначала объявляем переменную token
+                final token =
+                    json['token']
+                        as String; // ← сначала объявляем переменную token
                 fullText += token;
-                print('🔵 Токен: "$token"');  // ← теперь token существует
+                print('🔵 Токен: "$token"'); // ← теперь token существует
                 continue;
               }
 
@@ -173,7 +173,9 @@ class MasterChatService {
       print('🔵 hasMetadata: $hasMetadata');
       print('🔵 Итоговый agentId: $agentId');
       print('🔵 Итоговый sessionId: $sessionId');
-      print('🔵 Итоговый текст: ${fullText.substring(0, fullText.length > 50 ? 50 : fullText.length)}...');
+      print(
+        '🔵 Итоговый текст: ${fullText.substring(0, fullText.length > 50 ? 50 : fullText.length)}...',
+      );
 
       // 👇 СОХРАНЯЕМ АГЕНТА И СЕССИЮ ДЛЯ СЛЕДУЮЩИХ ЗАПРОСОВ
       if (agentId != null && sessionId != null) {
@@ -216,7 +218,7 @@ class MasterChatService {
 
   /// Получить текущий ID агента
   String? get currentAgentId => _currentAgentId;
-  
+
   /// Получить текущий ID сессии
   String? get currentSessionId => _currentSessionId;
 
