@@ -1,37 +1,38 @@
 // lib/screens/chat_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // 👈 ДОБАВИТЬ
 import '../models/message.dart';
 import '../models/agent.dart';
 import '../services/service_factory.dart';
+import '../providers/agent_provider.dart'; // 👈 ДОБАВИТЬ
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 
-class ChatScreen extends StatefulWidget {
+class ChatScreen extends ConsumerStatefulWidget {
+  // 👈 ИЗМЕНИТЬ
   const ChatScreen({super.key});
 
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  ConsumerState<ChatScreen> createState() => _ChatScreenState(); // 👈 ИЗМЕНИТЬ
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends ConsumerState<ChatScreen> {
+  // 👈 ИЗМЕНИТЬ
   final _chatService = ServiceFactory.getChatService();
   final ScrollController _scrollController = ScrollController();
 
   List<Message> _messages = [];
   bool _isLoading = false;
 
-  // 👇 НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ОТСЛЕЖИВАНИЯ АГЕНТА
   String? _currentAgentId;
   String? _currentAgentName;
-  bool _isFirstMessage = true; // Флаг для первого сообщения
+  bool _isFirstMessage = true;
 
   @override
   void initState() {
     super.initState();
     _loadMessages();
-
-    // Устанавливаем имя агента по умолчанию
     _currentAgentName = 'AI Ассистент';
   }
 
@@ -51,14 +52,35 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // 👇 НОВЫЙ МЕТОД: получаем имя агента по ID из загруженного списка
+  String _getAgentName(String agentId) {
+    // Получаем состояние провайдера агентов
+    final agentsAsync = ref.read(agentsProvider);
+
+    // Если данные загружены, ищем агента
+    if (agentsAsync is AsyncData<List<Agent>>) {
+      try {
+        final agent = agentsAsync.value.firstWhere(
+          (a) => a.id == agentId,
+          orElse: () => throw Exception('Агент не найден'),
+        );
+        return agent.name;
+      } catch (e) {
+        print('⚠️ Агент с ID $agentId не найден');
+        return 'AI Ассистент';
+      }
+    }
+
+    // Если данные еще не загружены, возвращаем дефолтное имя
+    return 'AI Ассистент';
+  }
+
   Future<void> _sendMessage(String text) async {
     setState(() => _isLoading = true);
 
     try {
-      // 1. Отправляем сообщение и получаем результат
       final result = await _chatService.sendMessage(text);
 
-      // 2. Создаем сообщение пользователя
       final userMessage = Message(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         text: text,
@@ -66,17 +88,16 @@ class _ChatScreenState extends State<ChatScreen> {
         timestamp: DateTime.now(),
       );
 
-      // 3. 👇 ОБНОВЛЯЕМ ИНФОРМАЦИЮ ОБ АГЕНТЕ (если она есть)
+      // 👇 ИСПРАВЛЕНО: используем _getAgentName вместо Agent.getNameById
       if (result.agentId != null && result.sessionId != null) {
         setState(() {
           _currentAgentId = result.agentId;
-          _currentAgentName = Agent.getNameById(result.agentId!);
+          _currentAgentName = _getAgentName(result.agentId!); // 👈 ИЗМЕНЕНО
           _isFirstMessage = false;
         });
         print('🔄 Текущий агент: $_currentAgentName (${_currentAgentId})');
       }
 
-      // 4. Создаем сообщение ассистента с информацией об агенте
       final aiMessage = Message(
         id:
             result.messageId ??
@@ -84,23 +105,19 @@ class _ChatScreenState extends State<ChatScreen> {
         text: result.text,
         isFromUser: false,
         timestamp: DateTime.now(),
-        agentId: result.agentId, // 👈 Сохраняем ID агента
-        sessionId: result.sessionId, // 👈 Сохраняем ID сессии
+        agentId: result.agentId,
+        sessionId: result.sessionId,
       );
 
-      // 5. Добавляем оба сообщения в список
       setState(() {
         _messages.add(userMessage);
         _messages.add(aiMessage);
         _isLoading = false;
       });
 
-      // 6. Прокручиваем вниз
       _scrollToBottom();
     } catch (e) {
       setState(() => _isLoading = false);
-
-      // Показываем ошибку в SnackBar
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('❌ Ошибка: $e'),
@@ -112,7 +129,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _clearChat() async {
-    // 👇 СБРАСЫВАЕМ СОСТОЯНИЕ АГЕНТА ПРИ ОЧИСТКЕ ЧАТА
     setState(() {
       _isLoading = true;
       _currentAgentId = null;
@@ -147,7 +163,6 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // 👇 ДИНАМИЧЕСКИЙ ЗАГОЛОВОК С ИМЕНЕМ АГЕНТА
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -155,16 +170,6 @@ class _ChatScreenState extends State<ChatScreen> {
               _currentAgentName ?? 'AI Ассистент',
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            // 👇 ПОКАЗЫВАЕМ ID АГЕНТА МЕЛКИМ ШРИФТОМ (для отладки)
-            // if (_currentAgentId != null)
-            //   Text(
-            //     'ID: $_currentAgentId',
-            //     style: TextStyle(
-            //       fontSize: 10,
-            //       fontWeight: FontWeight.normal,
-            //       color: Colors.grey[600],
-            //     ),
-            //   ),
           ],
         ),
         actions: [
@@ -177,7 +182,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
-          // Список сообщений
           Expanded(
             child: _isLoading && _messages.isEmpty
                 ? const Center(child: CircularProgressIndicator())
@@ -193,7 +197,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     },
                   ),
           ),
-          // 👇 ПОКАЗЫВАЕМ ИНФОРМАЦИЮ О ТЕКУЩЕМ АГЕНТЕ (для отладки)
           if (_currentAgentId != null && !_isFirstMessage)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -210,7 +213,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
-          // Поле ввода
           MessageInput(onSend: _sendMessage, isLoading: _isLoading),
         ],
       ),

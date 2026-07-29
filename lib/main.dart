@@ -21,8 +21,8 @@ class MyApp extends StatelessWidget {
       title: 'AI Assistant',
       theme: AppTheme.lightTheme,
       // theme: ThemeData.dark(),
-      home: const TestScreen(),
-      // home: const SplashScreen(),
+      // home: const TestScreen(),
+      home: const SplashScreen(),
       // home: const ChatScreen(),
       debugShowCheckedModeBanner: false,
     );
