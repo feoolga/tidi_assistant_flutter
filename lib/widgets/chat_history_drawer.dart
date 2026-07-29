@@ -10,12 +10,14 @@ import '../theme/app_theme.dart';
 
 class ChatHistoryDrawer extends ConsumerWidget {
   final VoidCallback onChatSelected;
-  final ValueChanged<ChatSession>? onChatCreated; // 👈 НОВЫЙ ПАРАМЕТР
+  final VoidCallback? onChatCreated;
+  final VoidCallback? onResetSession;
 
   const ChatHistoryDrawer({
     super.key,
     required this.onChatSelected,
     this.onChatCreated,
+    this.onResetSession,
   });
 
   @override
@@ -166,42 +168,19 @@ class ChatHistoryDrawer extends ConsumerWidget {
 
   // 👇 НОВЫЙ МЕТОД: создание нового чата
   void _createNewChat(BuildContext context, WidgetRef ref) async {
-    // Показываем индикатор загрузки
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    // Закрываем drawer
+    Navigator.pop(context);
 
-    try {
-      // Получаем список агентов
-      final agentsAsync = ref.read(agentsProvider);
-      if (agentsAsync is! AsyncData<List<Agent>>) {
-        scaffoldMessenger.showSnackBar(
-          const SnackBar(content: Text('Агенты еще не загружены')),
-        );
-        return;
-      }
+    // Сбрасываем сессию (чтобы следующий запрос пошел через мастера)
+    onResetSession?.call();
 
-      // Берем первого агента (или можно показать выбор)
-      final firstAgent = agentsAsync.value.first;
+    // Сообщаем родителю, что создан новый чат (без конкретного агента)
+    onChatCreated?.call(); // или просто вызываем без параметра
 
-      // Создаем чат
-      final chat = await ref.read(createChatProvider(firstAgent.id).future);
-
-      // Закрываем drawer
-      Navigator.pop(context);
-
-      // Уведомляем родителя о создании чата
-      onChatCreated?.call(chat);
-
-      scaffoldMessenger.showSnackBar(
-        SnackBar(content: Text('Чат создан с агентом ${firstAgent.name}')),
-      );
-    } catch (e) {
-      scaffoldMessenger.showSnackBar(
-        SnackBar(
-          content: Text('Ошибка создания чата: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+    // Показываем уведомление
+    // ScaffoldMessenger.of(
+    //   context,
+    // ).showSnackBar(const SnackBar(content: Text('Новый чат создан')));
   }
 }
 

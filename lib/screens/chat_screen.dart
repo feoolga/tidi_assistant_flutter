@@ -148,6 +148,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+  void _startNewChat() {
+    setState(() {
+      _messages.clear();
+      _currentAgentId = null;
+      _currentAgentName = 'AI Ассистент';
+      _isFirstMessage = true;
+      _isLoading = false;
+    });
+
+    _chatService.resetSession();
+    print('🔄 Новый чат создан');
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -167,9 +180,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         onChatSelected: () {
           // TODO: загрузить выбранный чат
         },
-        onChatCreated: (chat) {
-          // TODO: открыть созданный чат
-          print('✅ Создан чат: ${chat.displayTitle} (${chat.id})');
+        onChatCreated: _startNewChat,
+        onResetSession: () {
+          _chatService.resetSession();
         },
       ),
       appBar: AppBar(
