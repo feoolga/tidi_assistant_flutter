@@ -8,6 +8,7 @@ import '../services/service_factory.dart';
 import '../providers/agent_provider.dart'; // 👈 ДОБАВИТЬ
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
+import '../widgets/chat_history_drawer.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   // 👈 ИЗМЕНИТЬ
@@ -162,7 +163,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: ChatHistoryDrawer(
+        onChatSelected: () {
+          // TODO: загрузить выбранный чат
+        },
+      ),
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.menu),
+          onPressed: () {
+            Scaffold.of(context).openDrawer();
+          },
+        ),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
