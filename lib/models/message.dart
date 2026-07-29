@@ -5,10 +5,10 @@ class Message {
   final String text;
   final bool isFromUser;
   final DateTime timestamp;
-  
-  final String? agentId;      // ID агента, который ответил (для сообщений AI)
-  final String? sessionId;    // ID сессии (чата) на бэкенде
-  
+
+  final String? agentId; // ID агента, который ответил (для сообщений AI)
+  final String? sessionId; // ID сессии (чата) на бэкенде
+
   // Для будущего: источники и фидбэк (пока не используем)
   final List<Map<String, dynamic>>? sources;
   final Map<String, dynamic>? feedback;
@@ -26,11 +26,34 @@ class Message {
 
   // Преобразование из JSON (с бэкенда)
   factory Message.fromJson(Map<String, dynamic> json) {
+    // Определяем, кто автор: role == 'user' или есть isFromUser
+    bool isFromUser;
+    if (json.containsKey('role')) {
+      isFromUser = json['role'] == 'user';
+    } else if (json.containsKey('isFromUser')) {
+      isFromUser = json['isFromUser'] as bool? ?? false;
+    } else {
+      isFromUser = false;
+    }
+
+    // Определяем текст: content или text
+    final String text =
+        json['content'] as String? ?? json['text'] as String? ?? '';
+
+    // Определяем timestamp: created_at или timestamp
+    final String timestampStr =
+        json['created_at'] as String? ?? json['timestamp'] as String? ?? '';
+    final DateTime timestamp = timestampStr.isNotEmpty
+        ? DateTime.parse(timestampStr)
+        : DateTime.now();
+
     return Message(
-      id: json['id'] as String,
-      text: json['text'] as String,
-      isFromUser: json['isFromUser'] as bool,
-      timestamp: DateTime.parse(json['timestamp'] as String),
+      id:
+          json['id']?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      text: text,
+      isFromUser: isFromUser,
+      timestamp: timestamp,
       agentId: json['agentId'] as String?,
       sessionId: json['sessionId'] as String?,
       sources: json['sources'] as List<Map<String, dynamic>>?,

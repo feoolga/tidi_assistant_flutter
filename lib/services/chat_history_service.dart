@@ -44,15 +44,27 @@ class ChatHistoryService {
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/agents/$agentId/sessions/$chatId/messages'),
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': _userId, // 👈 ДОБАВЛЯЕМ
-        },
+        headers: {'Content-Type': 'application/json', 'X-User-Id': _userId},
       );
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        return data.map((json) => Message.fromJson(json)).toList();
+        final data = jsonDecode(response.body) as List;
+        print('📦 Получены сообщения: ${data.length} шт.');
+        print('📦 Первое сообщение: ${data.isNotEmpty ? data.first : 'нет'}');
+
+        return data
+            .map((json) {
+              // 👇 ДОБАВЛЯЕМ ПРОВЕРКУ
+              try {
+                return Message.fromJson(json as Map<String, dynamic>);
+              } catch (e) {
+                print('❌ Ошибка парсинга сообщения: $e');
+                print('❌ JSON: $json');
+                return null;
+              }
+            })
+            .whereType<Message>()
+            .toList();
       } else {
         throw Exception('Ошибка загрузки сообщений: ${response.statusCode}');
       }

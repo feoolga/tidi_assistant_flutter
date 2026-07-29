@@ -9,6 +9,7 @@ import '../providers/agent_provider.dart'; // 👈 ДОБАВИТЬ
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/chat_history_drawer.dart';
+import '../providers/chat_history_provider.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   // 👈 ИЗМЕНИТЬ
@@ -50,6 +51,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+    }
+  }
+
+  Future<void> _loadChatMessages(String agentId, String chatId) async {
+    setState(() => _isLoading = true);
+
+    try {
+      // Загружаем сообщения через провайдер
+      final messages = await ref.read(
+        chatMessagesProvider((agentId, chatId)).future,
+      );
+
+      setState(() {
+        _messages = messages;
+        _isLoading = false;
+        _currentAgentId = agentId;
+        _currentAgentName = _getAgentName(agentId);
+        _isFirstMessage = false;
+      });
+
+      // Сохраняем сессию в сервисе для продолжения диалога
+      _chatService.setSession(agentId, chatId);
+
+      _scrollToBottom();
+    } catch (e) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ошибка загрузки сообщений: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -177,7 +210,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       drawer: ChatHistoryDrawer(
-        onChatSelected: () {
+        onChatSelected: (agentId, chatId) {
+          print('📂 Выбран чат: agentId=$agentId, chatId=$chatId');
+          _loadChatMessages(agentId, chatId);
           // TODO: загрузить выбранный чат
         },
         onChatCreated: _startNewChat,

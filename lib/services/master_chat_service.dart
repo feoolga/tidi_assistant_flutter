@@ -239,4 +239,11 @@ class MasterChatService {
     resetSession();
     return;
   }
+
+  /// Установить текущую сессию (для продолжения диалога)
+  void setSession(String agentId, String sessionId) {
+    _currentAgentId = agentId;
+    _currentSessionId = sessionId;
+    print('🔵 Установлена сессия: агент=$agentId, сессия=$sessionId');
+  }
 }

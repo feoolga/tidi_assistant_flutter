@@ -9,7 +9,7 @@ import '../providers/agent_provider.dart';
 import '../theme/app_theme.dart';
 
 class ChatHistoryDrawer extends ConsumerWidget {
-  final VoidCallback onChatSelected;
+  final void Function(String agentId, String chatId) onChatSelected;
   final VoidCallback? onChatCreated;
   final VoidCallback? onResetSession;
 
@@ -122,7 +122,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
                       chat: chat,
                       onTap: () {
                         Navigator.pop(context);
-                        onChatSelected();
+                        onChatSelected(chat.agentId, chat.id);
                       },
                     );
                   },
