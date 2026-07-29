@@ -1,6 +1,7 @@
 // lib/services/service_factory.dart
 
 import 'agent_service.dart';
+import 'chat_history_service.dart';
 import 'master_chat_service.dart';
 import 'mock_chat_service.dart';
 
@@ -14,6 +15,10 @@ class ServiceFactory {
   // 📌 НОВОЕ: Сервис для агентов
   static AgentService getAgentService() {
     return AgentService(baseUrl: apiUrl);
+  }
+
+  static ChatHistoryService getChatHistoryService() {
+    return ChatHistoryService(baseUrl: apiUrl);
   }
 
   static dynamic getChatService() {
