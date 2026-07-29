@@ -167,13 +167,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         onChatSelected: () {
           // TODO: загрузить выбранный чат
         },
+        onChatCreated: (chat) {
+          // TODO: открыть созданный чат
+          print('✅ Создан чат: ${chat.displayTitle} (${chat.id})');
+        },
       ),
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.menu),
-          onPressed: () {
-            Scaffold.of(context).openDrawer();
-          },
+        leading: Builder(
+          // 👈 ОБЕРНИ В Builder
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () {
+              Scaffold.of(context).openDrawer(); // 👈 ТЕПЕРЬ РАБОТАЕТ
+            },
+            tooltip: 'История чатов',
+          ),
         ),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

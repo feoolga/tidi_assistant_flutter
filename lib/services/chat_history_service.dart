@@ -8,15 +8,24 @@ import '../models/message.dart';
 /// Сервис для работы с историей чатов и сообщениями агентов
 class ChatHistoryService {
   final String _baseUrl;
+  final String _userId;
 
-  ChatHistoryService({required String baseUrl}) : _baseUrl = baseUrl;
+  ChatHistoryService({
+    required String baseUrl,
+    String userId =
+        '11111111-1111-1111-1111-111111111111', // 👈 ЗНАЧЕНИЕ ПО УМОЛЧАНИЮ
+  }) : _baseUrl = baseUrl,
+       _userId = userId;
 
   /// Получить все чаты агента
   Future<List<ChatSession>> getChats(String agentId) async {
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/agents/$agentId/sessions'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': _userId, // 👈 ДОБАВЛЯЕМ
+        },
       );
 
       if (response.statusCode == 200) {
@@ -35,7 +44,10 @@ class ChatHistoryService {
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl/agents/$agentId/sessions/$chatId/messages'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': _userId, // 👈 ДОБАВЛЯЕМ
+        },
       );
 
       if (response.statusCode == 200) {
@@ -54,7 +66,11 @@ class ChatHistoryService {
     try {
       final response = await http.post(
         Uri.parse('$_baseUrl/agents/$agentId/sessions'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': _userId, // 👈 ДОБАВЛЯЕМ
+        },
+        body: jsonEncode({}),
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
@@ -73,7 +89,10 @@ class ChatHistoryService {
     try {
       final response = await http.delete(
         Uri.parse('$_baseUrl/agents/$agentId/sessions/$chatId'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': _userId, // 👈 ДОБАВЛЯЕМ
+        },
       );
 
       if (response.statusCode != 200 && response.statusCode != 204) {
@@ -93,7 +112,10 @@ class ChatHistoryService {
     try {
       final response = await http.patch(
         Uri.parse('$_baseUrl/agents/$agentId/sessions/$chatId'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': _userId, // 👈 ДОБАВЛЯЕМ
+        },
         body: jsonEncode({'title': newTitle}),
       );
 

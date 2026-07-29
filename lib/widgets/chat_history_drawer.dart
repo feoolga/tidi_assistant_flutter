@@ -3,18 +3,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
+import '../models/agent.dart';
 import '../providers/chat_history_provider.dart';
 import '../providers/agent_provider.dart';
 import '../theme/app_theme.dart';
 
 class ChatHistoryDrawer extends ConsumerWidget {
   final VoidCallback onChatSelected;
+  final ValueChanged<ChatSession>? onChatCreated; // 👈 НОВЫЙ ПАРАМЕТР
 
-  const ChatHistoryDrawer({super.key, required this.onChatSelected});
+  const ChatHistoryDrawer({
+    super.key,
+    required this.onChatSelected,
+    this.onChatCreated,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final allChatsAsync = ref.watch(allChatsProvider);
+    final agentsAsync = ref.watch(agentsProvider);
 
     return Drawer(
       child: Column(
@@ -55,8 +62,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: () {
-                      Navigator.pop(context);
-                      // TODO: создать новый чат
+                      _createNewChat(context, ref);
                     },
                     icon: const Icon(Icons.add, size: 18),
                     label: const Text('Новый чат'),
@@ -74,7 +80,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
             ),
           ),
 
-          // Список чатов
+          // Список чатов (остается без изменений)
           Expanded(
             child: allChatsAsync.when(
               data: (chats) {
@@ -114,7 +120,6 @@ class ChatHistoryDrawer extends ConsumerWidget {
                       chat: chat,
                       onTap: () {
                         Navigator.pop(context);
-                        // TODO: открыть чат
                         onChatSelected();
                       },
                     );
@@ -158,9 +163,49 @@ class ChatHistoryDrawer extends ConsumerWidget {
       ),
     );
   }
+
+  // 👇 НОВЫЙ МЕТОД: создание нового чата
+  void _createNewChat(BuildContext context, WidgetRef ref) async {
+    // Показываем индикатор загрузки
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
+    try {
+      // Получаем список агентов
+      final agentsAsync = ref.read(agentsProvider);
+      if (agentsAsync is! AsyncData<List<Agent>>) {
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(content: Text('Агенты еще не загружены')),
+        );
+        return;
+      }
+
+      // Берем первого агента (или можно показать выбор)
+      final firstAgent = agentsAsync.value.first;
+
+      // Создаем чат
+      final chat = await ref.read(createChatProvider(firstAgent.id).future);
+
+      // Закрываем drawer
+      Navigator.pop(context);
+
+      // Уведомляем родителя о создании чата
+      onChatCreated?.call(chat);
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(content: Text('Чат создан с агентом ${firstAgent.name}')),
+      );
+    } catch (e) {
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text('Ошибка создания чата: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
 }
 
-/// Виджет одного чата в списке
+// _ChatItem остается без изменений
 class _ChatItem extends ConsumerWidget {
   final ChatSession chat;
   final VoidCallback onTap;
@@ -169,7 +214,6 @@ class _ChatItem extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Получаем имя агента
     final agent = ref.watch(agentByIdProvider(chat.agentId));
 
     return ListTile(

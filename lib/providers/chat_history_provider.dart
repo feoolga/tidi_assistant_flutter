@@ -64,3 +64,12 @@ final allChatsProvider = FutureProvider<List<ChatSession>>((ref) async {
 
   return allChats;
 });
+
+/// Провайдер для создания нового чата
+final createChatProvider = FutureProvider.family<ChatSession, String>((
+  ref,
+  agentId,
+) async {
+  final service = ref.read(chatHistoryServiceProvider);
+  return service.createChat(agentId);
+});
