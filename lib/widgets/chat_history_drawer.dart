@@ -3,7 +3,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
-import '../models/agent.dart';
 import '../providers/chat_history_provider.dart';
 import '../providers/agent_provider.dart';
 import '../theme/app_theme.dart';
@@ -23,7 +22,6 @@ class ChatHistoryDrawer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final allChatsAsync = ref.watch(allChatsProvider);
-    final agentsAsync = ref.watch(agentsProvider);
 
     return Drawer(
       child: Column(

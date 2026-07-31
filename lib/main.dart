@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'screens/splash_screen.dart';
 import 'theme/app_theme.dart';
-import 'temp/state_test.dart';
 
 void main() async {
   // Загружаем .env файл перед запуском приложения
