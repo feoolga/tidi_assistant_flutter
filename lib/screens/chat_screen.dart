@@ -1,199 +1,44 @@
 // lib/screens/chat_screen.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart'; // 👈 ДОБАВИТЬ
-import '../models/message.dart';
-import '../models/agent.dart';
-import '../services/service_factory.dart';
-import '../providers/agent_provider.dart'; // 👈 ДОБАВИТЬ
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/chat_provider.dart';  // 👈 НАШ НОВЫЙ ПРОВАЙДЕР
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/chat_history_drawer.dart';
-import '../providers/chat_history_provider.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
-  // 👈 ИЗМЕНИТЬ
   const ChatScreen({super.key});
 
   @override
-  ConsumerState<ChatScreen> createState() => _ChatScreenState(); // 👈 ИЗМЕНИТЬ
+  ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
-  // 👈 ИЗМЕНИТЬ
-  final _chatService = ServiceFactory.getChatService();
   final ScrollController _scrollController = ScrollController();
 
-  List<Message> _messages = [];
-  bool _isLoading = false;
-
-  String? _currentAgentId;
-  String? _currentAgentName;
-  bool _isFirstMessage = true;
+  // ============================================================
+  // ЖИЗНЕННЫЙ ЦИКЛ
+  // ============================================================
 
   @override
   void initState() {
     super.initState();
-    _loadMessages();
-    _currentAgentName = 'AI Ассистент';
+    // При создании экрана проверяем, есть ли сообщения
+    // Если нет — будет показано приветственное (оно уже есть в ChatNotifier)
   }
 
-  Future<void> _loadMessages() async {
-    setState(() => _isLoading = true);
-    try {
-      final messages = await _chatService.getMessages();
-      setState(() {
-        _messages = messages;
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
-    }
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
-  Future<void> _loadChatMessages(String agentId, String chatId) async {
-    setState(() => _isLoading = true);
+  // ============================================================
+  // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+  // ============================================================
 
-    try {
-      // Загружаем сообщения через провайдер
-      final messages = await ref.read(
-        chatMessagesProvider((agentId, chatId)).future,
-      );
-
-      setState(() {
-        _messages = messages;
-        _isLoading = false;
-        _currentAgentId = agentId;
-        _currentAgentName = _getAgentName(agentId);
-        _isFirstMessage = false;
-      });
-
-      // Сохраняем сессию в сервисе для продолжения диалога
-      _chatService.setSession(agentId, chatId);
-
-      _scrollToBottom();
-    } catch (e) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Ошибка загрузки сообщений: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  // 👇 НОВЫЙ МЕТОД: получаем имя агента по ID из загруженного списка
-  String _getAgentName(String agentId) {
-    // Получаем состояние провайдера агентов
-    final agentsAsync = ref.read(agentsProvider);
-
-    // Если данные загружены, ищем агента
-    if (agentsAsync is AsyncData<List<Agent>>) {
-      try {
-        final agent = agentsAsync.value.firstWhere(
-          (a) => a.id == agentId,
-          orElse: () => throw Exception('Агент не найден'),
-        );
-        return agent.name;
-      } catch (e) {
-        print('⚠️ Агент с ID $agentId не найден');
-        return 'AI Ассистент';
-      }
-    }
-
-    // Если данные еще не загружены, возвращаем дефолтное имя
-    return 'AI Ассистент';
-  }
-
-  Future<void> _sendMessage(String text) async {
-    setState(() => _isLoading = true);
-
-    try {
-      final result = await _chatService.sendMessage(text);
-
-      final userMessage = Message(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        text: text,
-        isFromUser: true,
-        timestamp: DateTime.now(),
-      );
-
-      // 👇 ИСПРАВЛЕНО: используем _getAgentName вместо Agent.getNameById
-      if (result.agentId != null && result.sessionId != null) {
-        setState(() {
-          _currentAgentId = result.agentId;
-          _currentAgentName = _getAgentName(result.agentId!); // 👈 ИЗМЕНЕНО
-          _isFirstMessage = false;
-        });
-        print('🔄 Текущий агент: $_currentAgentName (${_currentAgentId})');
-      }
-
-      final aiMessage = Message(
-        id:
-            result.messageId ??
-            DateTime.now().millisecondsSinceEpoch.toString(),
-        text: result.text,
-        isFromUser: false,
-        timestamp: DateTime.now(),
-        agentId: result.agentId,
-        sessionId: result.sessionId,
-      );
-
-      setState(() {
-        _messages.add(userMessage);
-        _messages.add(aiMessage);
-        _isLoading = false;
-      });
-
-      _scrollToBottom();
-    } catch (e) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ Ошибка: $e'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    }
-  }
-
-  Future<void> _clearChat() async {
-    setState(() {
-      _isLoading = true;
-      _currentAgentId = null;
-      _currentAgentName = 'AI Ассистент';
-      _isFirstMessage = true;
-    });
-
-    try {
-      await _chatService.clearMessages();
-      await _loadMessages();
-    } catch (e) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Ошибка очистки: $e')));
-    }
-  }
-
-  void _startNewChat() {
-    setState(() {
-      _messages.clear();
-      _currentAgentId = null;
-      _currentAgentName = 'AI Ассистент';
-      _isFirstMessage = true;
-      _isLoading = false;
-    });
-
-    _chatService.resetSession();
-    print('🔄 Новый чат создан');
-  }
-
+  /// Прокрутка вниз (к последнему сообщению)
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -206,27 +51,102 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
   }
 
+  /// Получить имя агента для отображения в AppBar
+  String _getAgentName(String? agentId) {
+    if (agentId == null) return 'AI Ассистент';
+    
+    // Пока просто возвращаем ID, позже можно будет загружать из списка агентов
+    // или сделать маппинг
+    final agentNames = {
+      'chat': 'Чат-агент',
+      'epoz': 'ЕПоЗ',
+      'ocr': 'OCR',
+      'document_chat': 'Документы',
+    };
+    return agentNames[agentId] ?? 'AI Ассистент';
+  }
+
+  // ============================================================
+  // МЕТОДЫ-ОБРАБОТЧИКИ СОБЫТИЙ
+  // ============================================================
+
+  /// Отправить сообщение
+  void _sendMessage(String text) {
+    // Получаем notifier и вызываем sendMessage
+    ref.read(chatProvider.notifier).sendMessage(text);
+    
+    // Прокручиваем вниз после отправки
+    Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
+  }
+
+  /// Загрузить чат из истории
+  void _loadChat(String agentId, String chatId) {
+    print('📂 Загружаем чат: agentId=$agentId, chatId=$chatId');
+    ref.read(chatProvider.notifier).loadChat(agentId, chatId);
+  }
+
+  /// Очистить чат
+  void _clearChat() {
+    ref.read(chatProvider.notifier).clearChat();
+  }
+
+  /// Создать новый чат (сброс сессии)
+  void _startNewChat() {
+    ref.read(chatProvider.notifier).resetSession();
+    // Показываем уведомление
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('🔄 Новый чат создан'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
   @override
   Widget build(BuildContext context) {
+    // 👇 ПОДПИСЫВАЕМСЯ НА СОСТОЯНИЕ ЧАТА
+    final chatState = ref.watch(chatProvider);
+    final messages = chatState.messages;
+    final isLoading = chatState.isLoading;
+    final currentAgentId = chatState.currentAgentId;
+    final error = chatState.error;
+
+    // Если есть ошибка — показываем SnackBar
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (error != null && error.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ $error'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        // Очищаем ошибку после показа
+        ref.read(chatProvider.notifier).clearError();
+      }
+    });
+
     return Scaffold(
       drawer: ChatHistoryDrawer(
         onChatSelected: (agentId, chatId) {
           print('📂 Выбран чат: agentId=$agentId, chatId=$chatId');
-          _loadChatMessages(agentId, chatId);
-          // TODO: загрузить выбранный чат
+          _loadChat(agentId, chatId);
         },
         onChatCreated: _startNewChat,
         onResetSession: () {
-          _chatService.resetSession();
+          ref.read(chatProvider.notifier).resetSession();
         },
       ),
       appBar: AppBar(
         leading: Builder(
-          // 👈 ОБЕРНИ В Builder
           builder: (context) => IconButton(
             icon: const Icon(Icons.menu),
             onPressed: () {
-              Scaffold.of(context).openDrawer(); // 👈 ТЕПЕРЬ РАБОТАЕТ
+              Scaffold.of(context).openDrawer();
             },
             tooltip: 'История чатов',
           ),
@@ -235,9 +155,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              _currentAgentName ?? 'AI Ассистент',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              _getAgentName(currentAgentId),
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
+            if (currentAgentId != null)
+              Text(
+                'Агент: $currentAgentId',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
           ],
         ),
         actions: [
@@ -250,22 +181,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ),
       body: Column(
         children: [
+          // ============================================================
+          // ОСНОВНОЙ СПИСОК СООБЩЕНИЙ
+          // ============================================================
           Expanded(
-            child: _isLoading && _messages.isEmpty
-                ? const Center(child: CircularProgressIndicator())
+            child: messages.isEmpty && isLoading
+                ? const Center(
+                    child: CircularProgressIndicator(),
+                  )
                 : ListView.builder(
                     controller: _scrollController,
                     reverse: true,
                     padding: const EdgeInsets.all(8.0),
-                    itemCount: _messages.length,
+                    itemCount: messages.length,
                     itemBuilder: (context, index) {
-                      final reversedIndex = _messages.length - 1 - index;
-                      final message = _messages[reversedIndex];
+                      final reversedIndex = messages.length - 1 - index;
+                      final message = messages[reversedIndex];
                       return MessageBubble(message: message);
                     },
                   ),
           ),
-          if (_currentAgentId != null && !_isFirstMessage)
+
+          // ============================================================
+          // ИНДИКАТОР ТЕКУЩЕГО АГЕНТА
+          // ============================================================
+          if (currentAgentId != null)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               color: Colors.grey[100],
@@ -275,13 +215,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   Icon(Icons.memory, size: 14, color: Colors.grey[600]),
                   const SizedBox(width: 4),
                   Text(
-                    'Агент: $_currentAgentId',
+                    'Агент: $currentAgentId',
                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
                 ],
               ),
             ),
-          MessageInput(onSend: _sendMessage, isLoading: _isLoading),
+
+          // ============================================================
+          // ПОЛЕ ВВОДА СООБЩЕНИЯ
+          // ============================================================
+          MessageInput(
+            onSend: _sendMessage,
+            isLoading: isLoading,
+          ),
         ],
       ),
     );

@@ -2,7 +2,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/message.dart';
-import '../services/master_chat_service.dart';
+import '../services/openai_chat_service.dart';
 import '../services/service_factory.dart';
 
 // ============================================================
@@ -47,8 +47,6 @@ class ChatState {
 
   // ---- copyWith: создание копии с изменениями ----
   
-  /// Создаёт новое состояние на основе текущего,
-  /// заменяя указанные поля.
   ChatState copyWith({
     List<Message>? messages,
     bool? isLoading,
@@ -67,17 +65,10 @@ class ChatState {
 
   // ---- Вспомогательные геттеры ----
   
-  /// Есть ли сообщения в чате
   bool get hasMessages => messages.isNotEmpty;
-  
-  /// Есть ли ошибка
   bool get hasError => error != null && error!.isNotEmpty;
-  
-  /// Текущий агент и сессия установлены?
   bool get hasSession => currentAgentId != null && currentSessionId != null;
 
-  // ---- Отладка ----
-  
   @override
   String toString() {
     return 'ChatState(messages: ${messages.length}, isLoading: $isLoading, '
@@ -86,28 +77,25 @@ class ChatState {
 }
 
 // ============================================================
-// ЧАСТЬ 2: NOTIFIER (пока только основа)
+// ЧАСТЬ 2: NOTIFIER
 // ============================================================
 
 /// Управляет состоянием чата.
-/// Все изменения состояния происходят через методы этого класса.
 class ChatNotifier extends StateNotifier<ChatState> {
-  /// Сервис для общения с API
-  final MasterChatService _chatService;
+  final OpenAIChatService _chatService;
 
   // ---- Конструктор ----
   
-  ChatNotifier({
-    required MasterChatService chatService,
-  })  : _chatService = chatService,
+  ChatNotifier({required OpenAIChatService chatService})
+      : _chatService = chatService,
         super(ChatState.initial()) {
-    // При создании добавляем приветственное сообщение
     _addWelcomeMessage();
   }
 
-  // ---- Приватные методы для изменения состояния ----
+  // ============================================================
+  // ПРИВАТНЫЕ МЕТОДЫ
+  // ============================================================
   
-  /// Добавляет приветственное сообщение (если чат пуст)
   void _addWelcomeMessage() {
     if (state.messages.isEmpty) {
       final welcomeMessage = Message(
@@ -120,36 +108,30 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  /// Устанавливает флаг загрузки
   void _setLoading(bool isLoading) {
     state = state.copyWith(isLoading: isLoading);
   }
 
-  /// Устанавливает ошибку
   void _setError(String? error) {
     state = state.copyWith(error: error);
   }
 
-  /// Очищает ошибку
   void _clearError() {
     state = state.copyWith(error: null);
   }
 
-  /// Добавляет одно сообщение в конец списка
   void _addMessage(Message message) {
     state = state.copyWith(
       messages: [...state.messages, message],
     );
   }
 
-  /// Добавляет несколько сообщений в конец списка
   void _addMessages(List<Message> newMessages) {
     state = state.copyWith(
       messages: [...state.messages, ...newMessages],
     );
   }
 
-  /// Устанавливает сессию (агент + сессия)
   void _setSession(String agentId, String sessionId) {
     state = state.copyWith(
       currentAgentId: agentId,
@@ -157,7 +139,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
   }
 
-  /// Очищает сессию
   void _clearSession() {
     state = state.copyWith(
       currentAgentId: null,
@@ -165,69 +146,79 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
   }
 
-  /// Заменяет все сообщения (для загрузки истории)
   void _setMessages(List<Message> messages) {
     state = state.copyWith(messages: messages);
   }
 
-  // ---- Публичные методы (будем заполнять в следующем шаге) ----
+  // ============================================================
+  // ПУБЛИЧНЫЕ МЕТОДЫ
+  // ============================================================
   
-  /// TODO: Отправить сообщение
-  /// Будет реализовано в Шаге 2.2
   Future<void> sendMessage(String text) async {
-    // Пока заглушка
     print('📤 sendMessage вызван с текстом: "$text"');
+    
+    _clearError();
+    _addMessage(Message.fromUser(text: text));
     _setLoading(true);
     
-    // Имитация задержки
-    await Future.delayed(const Duration(seconds: 1));
-    
-    // Добавляем тестовое сообщение
-    _addMessage(
-      Message.fromUser(text: text),
-    );
-    
-    _addMessage(
-      Message.fromAI(
-        text: 'Это тестовый ответ на сообщение: "$text"',
-        agentId: 'test_agent',
-        sessionId: 'test_session',
-      ),
-    );
-    
-    _setLoading(false);
+    try {
+      final result = await _chatService.sendMessage(text);
+      
+      final aiMessage = Message.fromAI(
+        text: result.text,
+        agentId: result.agentId,
+        sessionId: result.conversationId,
+        id: result.completionId,
+      );
+      
+      _addMessage(aiMessage);
+      
+      if (result.agentId != null && result.conversationId != null) {
+        _setSession(result.agentId!, result.conversationId!);
+      }
+      
+    } catch (e) {
+      print('❌ Ошибка в sendMessage: $e');
+      _setError(e.toString());
+    } finally {
+      _setLoading(false);
+    }
   }
 
-  /// TODO: Загрузить чат
-  /// Будет реализовано в Шаге 2.3
   Future<void> loadChat(String agentId, String chatId) async {
     print('📂 loadChat вызван: agentId=$agentId, chatId=$chatId');
     _setLoading(true);
     
-    // Имитация загрузки
-    await Future.delayed(const Duration(seconds: 1));
-    
-    final testMessages = [
-      Message.fromUser(text: 'Тестовое сообщение 1'),
-      Message.fromAI(
-        text: 'Тестовый ответ 1',
-        agentId: agentId,
-        sessionId: chatId,
-      ),
-      Message.fromUser(text: 'Тестовое сообщение 2'),
-      Message.fromAI(
-        text: 'Тестовый ответ 2',
-        agentId: agentId,
-        sessionId: chatId,
-      ),
-    ];
-    
-    _setMessages(testMessages);
-    _setSession(agentId, chatId);
-    _setLoading(false);
+    try {
+      // Временно заглушка
+      await Future.delayed(const Duration(seconds: 1));
+      
+      final testMessages = [
+        Message.fromUser(text: 'Тестовое сообщение 1'),
+        Message.fromAI(
+          text: 'Тестовый ответ 1',
+          agentId: agentId,
+          sessionId: chatId,
+        ),
+        Message.fromUser(text: 'Тестовое сообщение 2'),
+        Message.fromAI(
+          text: 'Тестовый ответ 2',
+          agentId: agentId,
+          sessionId: chatId,
+        ),
+      ];
+      
+      _setMessages(testMessages);
+      _setSession(agentId, chatId);
+      
+    } catch (e) {
+      print('❌ Ошибка в loadChat: $e');
+      _setError(e.toString());
+    } finally {
+      _setLoading(false);
+    }
   }
 
-  /// Очистить чат
   void clearChat() {
     print('🗑️ clearChat вызван');
     _clearSession();
@@ -236,35 +227,32 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _clearError();
   }
 
-  /// Сбросить сессию (начать новый диалог)
   void resetSession() {
     print('🔄 resetSession вызван');
     _chatService.resetSession();
     _clearSession();
     _clearError();
-    // Не очищаем сообщения, просто сбрасываем сессию
   }
 
-  /// Установить сессию (для продолжения диалога)
   void setSession(String agentId, String sessionId) {
     print('🔵 setSession: agentId=$agentId, sessionId=$sessionId');
     _chatService.setSession(agentId, sessionId);
     _setSession(agentId, sessionId);
   }
+
+  void clearError() {
+    _clearError();
+  }
 }
 
 // ============================================================
-// ЧАСТЬ 3: ПРОВАЙДЕРЫ (доступ к состоянию)
+// ЧАСТЬ 3: ПРОВАЙДЕРЫ
 // ============================================================
 
-/// Провайдер для сервиса чата
-final chatServiceProvider = Provider<MasterChatService>((ref) {
-  return ServiceFactory.getChatService() as MasterChatService;
+final chatServiceProvider = Provider<OpenAIChatService>((ref) {
+  return ServiceFactory.getChatService() as OpenAIChatService;
 });
 
-/// Провайдер состояния чата
-/// Используй ref.watch(chatProvider) для чтения состояния
-/// Используй ref.read(chatProvider.notifier) для вызова методов
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
   final service = ref.read(chatServiceProvider);
   return ChatNotifier(chatService: service);
