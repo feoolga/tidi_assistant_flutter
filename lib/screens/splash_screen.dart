@@ -2,26 +2,25 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart'; // 👈 ДОБАВИТЬ
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../theme/app_theme.dart';
-import '../providers/agent_provider.dart'; // 👈 ДОБАВИТЬ
+import '../providers/agent_provider.dart';
 import 'chat_screen.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
-  // 👈 ИЗМЕНИТЬ ConsumerStatefulWidget
   const SplashScreen({super.key});
 
   @override
-  ConsumerState<SplashScreen> createState() => _SplashScreenState(); // 👈 ИЗМЕНИТЬ ConsumerState
+  ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState
-    extends
-        ConsumerState<SplashScreen> // 👈 ИЗМЕНИТЬ ConsumerState
+class _SplashScreenState extends ConsumerState<SplashScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<double> _scaleAnimation;
+
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -49,23 +48,45 @@ class _SplashScreenState
 
     _animationController.forward();
 
-    // 👇 ЗАГРУЖАЕМ АГЕНТОВ
+    // Загружаем агентов и переходим в чат
     _loadAgentsAndNavigate();
   }
 
-  // 👇 НОВЫЙ МЕТОД: загружаем агентов и переходим в чат
   void _loadAgentsAndNavigate() async {
-    // Загружаем агентов через Riverpod
-    await ref.read(agentsProvider.future);
+    try {
+      // 👇 ДОБАВЛЯЕМ ТАЙМАУТ: если сервер не отвечает 5 секунд — переходим дальше
+      final agents = await ref
+          .read(agentsProvider.future)
+          .timeout(const Duration(seconds: 5));
 
-    // Ждем 2.5 секунды (чтобы показать анимацию)
-    await Future.delayed(const Duration(milliseconds: 2500));
+      print('✅ Загружено агентов: ${agents.length}');
 
-    if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const ChatScreen()),
-      );
+      // Небольшая задержка для анимации
+      await Future.delayed(const Duration(milliseconds: 1500));
+
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const ChatScreen()),
+        );
+      }
+    } catch (e) {
+      // 👇 ЕСЛИ ОШИБКА — ПОКАЗЫВАЕМ, НО ВСЁ РАВНО ПЕРЕХОДИМ В ЧАТ
+      print('⚠️ Ошибка загрузки агентов: $e');
+      
+      setState(() {
+        _errorMessage = 'Не удалось загрузить агентов: $e';
+      });
+
+      // Ждём 2 секунды, чтобы пользователь увидел ошибку
+      await Future.delayed(const Duration(seconds: 2));
+
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const ChatScreen()),
+        );
+      }
     }
   }
 
@@ -131,6 +152,29 @@ class _SplashScreenState
                     ),
                   ),
                   const SizedBox(height: 48),
+                  // 👇 ПОКАЗЫВАЕМ ОШИБКУ, ЕСЛИ ОНА ЕСТЬ
+                  if (_errorMessage != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.red.shade200),
+                      ),
+                      child: Column(
+                        children: [
+                          const Icon(Icons.error_outline, color: Colors.red, size: 24),
+                          const SizedBox(height: 8),
+                          Text(
+                            _errorMessage!,
+                            style: const TextStyle(color: Colors.red, fontSize: 14),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
                   SizedBox(
                     height: 40,
                     width: 40,
