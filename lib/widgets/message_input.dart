@@ -65,13 +65,13 @@ class _MessageInputState extends State<MessageInput> {
         color: Colors.white,
         border: Border(
           top: BorderSide(
-            color: AppTheme.primary.withOpacity(0.2),
+            color: AppTheme.primary.withValues(alpha: 0.2),
             width: 1.0,
           ),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.05),
+            color: Colors.grey.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),
@@ -121,7 +121,7 @@ class _MessageInputState extends State<MessageInput> {
                   border: Border.all(
                     color: _hasText 
                         ? AppTheme.primary 
-                        : AppTheme.primary.withOpacity(0.3),
+                        : AppTheme.primary.withValues(alpha: 0.3),
                     width: 1.5,
                   ),
                 ),

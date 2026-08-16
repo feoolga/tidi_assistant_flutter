@@ -47,7 +47,7 @@ class MessageBubble extends StatelessWidget {
                   ? [] // У пользователя нет тени
                   : [
                       BoxShadow(
-                        color: Colors.grey.withOpacity(0.1),
+                        color: Colors.grey.withValues(alpha: 0.1),
                         spreadRadius: 1,
                         blurRadius: 8,
                         offset: const Offset(0, 2),
@@ -56,7 +56,7 @@ class MessageBubble extends StatelessWidget {
               // Бордер как в web
               border: isFromUser
                   ? Border.all(
-                      color: AppTheme.primary.withOpacity(0.3),
+                      color: AppTheme.primary.withValues(alpha: 0.3),
                       width: 1.0,
                     )
                   : null,
@@ -81,8 +81,8 @@ class MessageBubble extends StatelessWidget {
                   _formatTime(message.timestamp),
                   style: TextStyle(
                     color: isFromUser 
-                        ? AppTheme.textSecondary.withOpacity(0.7)
-                        : AppTheme.textSecondary.withOpacity(0.5),
+                        ? AppTheme.textSecondary.withValues(alpha: 0.7)
+                        : AppTheme.textSecondary.withValues(alpha: 0.5),
                     fontSize: 10,
                   ),
                 ),

@@ -180,9 +180,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
         print('✅ Создан чат: agentId=$agentId, sessionId=$sessionId');
       }
       
-      // Убеждаемся, что у нас есть agentId и sessionId
-      final String finalAgentId = agentId!;
-      final String finalSessionId = sessionId!;
+      // После первой проверки agentId и sessionId гарантированно не null
+      final String finalAgentId = agentId;
+      final String finalSessionId = sessionId;
       
       // Отправляем сообщение через MasterChatService
       final result = await _chatService.sendMessage(text);
@@ -309,7 +309,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 /// Провайдер для сервиса чата
 final chatServiceProvider = Provider<MasterChatService>((ref) {
   // Используем ServiceFactory для получения сервиса
-  return ServiceFactory.getChatService() as MasterChatService;
+  return ServiceFactory.getChatService();
 });
 
 /// Провайдер для сервиса истории

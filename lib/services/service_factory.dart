@@ -3,8 +3,6 @@
 import 'agent_service.dart';
 import 'chat_history_service.dart';
 import 'master_chat_service.dart';  // 👈 МЕНЯЕМ ИМПОРТ
-// import 'openai_chat_service.dart';  // 👈 УДАЛЯЕМ (больше не нужен)
-// import 'mock_chat_service.dart';    // 👈 УДАЛЯЕМ (больше не нужен)
 
 class ServiceFactory {
   static const bool useMock = false;
