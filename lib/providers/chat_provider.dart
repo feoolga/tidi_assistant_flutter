@@ -107,12 +107,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
   void _listenToSessionChanges() {
     // Подписываемся на sessionProvider
     _ref.listen<ChatSessionState>(sessionProvider, (previous, next) {
-      // Если сессия изменилась - обновляем её в сервисе
+      // Теперь просто логируем изменения — сервис stateless,
+      // вся информация о сессии передается через параметры методов
       if (next.hasSession) {
-        _chatService.setSession(next.agentId!, next.sessionId!);
-        print('🔄 ChatNotifier: сессия обновлена из sessionProvider');
+        print('🔄 ChatNotifier: сессия изменилась: агент=${next.agentId}, conversation=${next.sessionId}');
       } else {
-        _chatService.resetSession();
         print('🔄 ChatNotifier: сессия сброшена');
       }
     });
@@ -197,14 +196,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
 
       // После первой проверки agentId и sessionId гарантированно не null
-      final String finalAgentId = agentId!;
-      final String finalSessionId = sessionId!;
+      final String finalAgentId = agentId;
+      final String finalSessionId = sessionId;
 
       // 👇 ОБНОВЛЯЕМ СЕССИЮ В СЕРВИСЕ (на всякий случай)
-      _chatService.setSession(finalAgentId, finalSessionId);
+      // _chatService.setSession(finalAgentId, finalSessionId);
 
       // Отправляем сообщение через MasterChatService
-      final result = await _chatService.sendMessage(text);
+      final result = await _chatService.sendMessage(
+        text: text,
+        agentId: finalAgentId,
+        sessionId: finalSessionId,
+      );
 
       // Создаем сообщение от AI
       final aiMessage = Message.fromAI(

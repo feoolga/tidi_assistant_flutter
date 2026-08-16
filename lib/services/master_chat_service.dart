@@ -29,13 +29,13 @@ class ChatResult {
   bool get hasAgentInfo => agentId != null && sessionId != null;
 }
 
+/// Сервис для работы с мастер-роутингом
+///
+/// Stateless-сервис: вся информация о сессии передается через параметры.
+/// Это делает сервис тестируемым и предсказуемым.
 class MasterChatService {
   final String _baseUrl;
   final String _userId;
-
-  // Сохраняем текущего агента и сессию для продолжения диалога
-  String? _currentAgentId;
-  String? _currentSessionId;
 
   MasterChatService({
     required String baseUrl,
@@ -44,9 +44,20 @@ class MasterChatService {
        _userId = userId;
 
   /// Отправить сообщение и получить результат
-  Future<ChatResult> sendMessage(String text) async {
+  ///
+  /// [text] — текст сообщения пользователя
+  /// [agentId] — ID агента (если null — используется авто-роутинг)
+  /// [sessionId] — ID сессии (conversation_id) для продолжения диалога
+  ///
+  /// Возвращает [ChatResult] с текстом ответа и информацией о сессии
+  Future<ChatResult> sendMessage({
+    required String text,
+    String? agentId,
+    String? sessionId,
+  }) async {
     try {
       print('🔵 Отправляем сообщение: "$text"');
+      print('🔵 agentId: $agentId, sessionId: $sessionId');
 
       // 👇 ПРАВИЛЬНЫЙ URL для OpenAI-совместимого API
       final uri = Uri.parse('$_baseUrl/v1/chat/completions');
@@ -60,13 +71,13 @@ class MasterChatService {
         'stream': true,
       };
 
-      // Если у нас уже есть агент и сессия - передаем их
-      if (_currentAgentId != null && _currentSessionId != null) {
-        body['model'] = _currentAgentId;
-        body['conversation_id'] = _currentSessionId;
-        print('🔵 Продолжаем диалог с агентом: $_currentAgentId, сессия: $_currentSessionId');
+      // Если у нас есть агент и сессия - передаем их
+      if (agentId != null && sessionId != null) {
+        body['model'] = agentId;
+        body['conversation_id'] = sessionId;
+        print('🔵 Продолжаем диалог с агентом: $agentId, сессия: $sessionId');
       } else {
-        body['model'] = 'auto';  // 👈 АВТО-РОУТИНГ
+        body['model'] = 'auto'; // 👈 АВТО-РОУТИНГ
         print('🔵 Новый диалог (авто-роутинг)');
       }
 
@@ -91,12 +102,12 @@ class MasterChatService {
       }
 
       // 👇 ПОЛУЧАЕМ AGENT_ID И SESSION_ID ИЗ ЗАГОЛОВКОВ
-      String? agentId = response.headers['x-agent-id'];
-      String? sessionId = response.headers['x-session-id'];
+      String? responseAgentId = response.headers['x-agent-id'];
+      String? responseSessionId = response.headers['x-session-id'];
 
       print('🔵 Заголовки ответа:');
-      print('   X-Agent-Id: $agentId');
-      print('   X-Session-Id: $sessionId');
+      print('   X-Agent-Id: $responseAgentId');
+      print('   X-Session-Id: $responseSessionId');
 
       // --- Парсим SSE поток ---
       final stream = response.stream;
@@ -113,7 +124,7 @@ class MasterChatService {
 
         for (int i = 0; i < lines.length - 1; i++) {
           final line = lines[i];
-          print('🔵 Строка SSE: $line');
+          // print('🔵 Строка SSE: $line'); // Раскомментировать для отладки
           if (line.startsWith('data: ')) {
             final data = line.substring(6).trim();
 
@@ -125,7 +136,6 @@ class MasterChatService {
 
             try {
               final json = jsonDecode(data) as Map<String, dynamic>;
-              print('🔵 JSON: $json');
 
               // 👇 ПОЛУЧАЕМ AGENT_ID И SESSION_ID ИЗ METADATA (если нет в заголовках)
               if (json.containsKey('type') && json['type'] == 'metadata') {
@@ -135,32 +145,31 @@ class MasterChatService {
                 final metaSessionId = json['session_id'] as String?;
 
                 // Если в заголовках не было, берем из metadata
-                if (agentId == null && metaAgentId != null) {
-                  agentId = metaAgentId;
-                  print('🔵 Agent ID из metadata: $agentId');
+                if (responseAgentId == null && metaAgentId != null) {
+                  responseAgentId = metaAgentId;
+                  print('🔵 Agent ID из metadata: $responseAgentId');
                 }
-                if (sessionId == null && metaSessionId != null) {
-                  sessionId = metaSessionId;
-                  print('🔵 Session ID из metadata: $sessionId');
+                if (responseSessionId == null && metaSessionId != null) {
+                  responseSessionId = metaSessionId;
+                  print('🔵 Session ID из metadata: $responseSessionId');
                 }
                 continue;
               }
 
               // Собираем токены из OpenAI-формата
               if (json.containsKey('choices')) {
-                  final choices = json['choices'] as List<dynamic>?;
-                  if (choices != null && choices.isNotEmpty) {
-                      final choice = choices.first as Map<String, dynamic>;
-                      final delta = choice['delta'] as Map<String, dynamic>?;
-                      if (delta != null) {
-                          final content = delta['content'] as String?;
-                          if (content != null && content.isNotEmpty) {
-                              fullText += content;
-                              // print('🔵 Токен: "$content"'); // можно раскомментировать для отладки
-                          }
-                      }
+                final choices = json['choices'] as List<dynamic>?;
+                if (choices != null && choices.isNotEmpty) {
+                  final choice = choices.first as Map<String, dynamic>;
+                  final delta = choice['delta'] as Map<String, dynamic>?;
+                  if (delta != null) {
+                    final content = delta['content'] as String?;
+                    if (content != null && content.isNotEmpty) {
+                      fullText += content;
+                    }
                   }
-                  continue;
+                }
+                continue;
               }
 
               // Получаем message_id
@@ -178,22 +187,13 @@ class MasterChatService {
 
       print('🔵 Парсинг SSE завершен');
       print('🔵 hasMetadata: $hasMetadata');
-      print('🔵 Итоговый agentId: $agentId');
-      print('🔵 Итоговый sessionId: $sessionId');
+      print('🔵 Итоговый agentId: $responseAgentId');
+      print('🔵 Итоговый sessionId: $responseSessionId');
       print(
         '🔵 Итоговый текст: ${fullText.substring(0, fullText.length > 50 ? 50 : fullText.length)}...',
       );
 
-      // 👇 СОХРАНЯЕМ АГЕНТА И СЕССИЮ ДЛЯ СЛЕДУЮЩИХ ЗАПРОСОВ
-      if (agentId != null && sessionId != null) {
-        _currentAgentId = agentId;
-        _currentSessionId = sessionId;
-        print('✅ Сохранен агент: $agentId, сессия: $sessionId');
-      } else {
-        print('⚠️ Не удалось получить agent_id или session_id');
-      }
-
-      // 👇 КОСТЫЛЬ!!! ЗАМЕНА ТЕКСТА ПОСЛЕ СБОРКИ ВСЕГО ОТВЕТА
+      // 👇 ЗАМЕНА ТЕКСТА ПОСЛЕ СБОРКИ ВСЕГО ОТВЕТА
       String displayText = fullText.trim();
 
       // Заменяем точную подстроку с переносами
@@ -208,26 +208,17 @@ class MasterChatService {
       return ChatResult(
         text: displayText,
         messageId: messageId,
-        agentId: agentId,
-        sessionId: sessionId,
+        agentId: responseAgentId,
+        sessionId: responseSessionId,
       );
     } catch (e) {
       throw Exception('Ошибка при отправке сообщения: $e');
     }
   }
 
-  /// Очистить текущие данные (для новой сессии)
-  void resetSession() {
-    _currentAgentId = null;
-    _currentSessionId = null;
-    print('🔄 Сессия сброшена');
-  }
-
-  /// Получить текущий ID агента
-  String? get currentAgentId => _currentAgentId;
-
-  /// Получить текущий ID сессии
-  String? get currentSessionId => _currentSessionId;
+  // ============================================================
+  // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ (для совместимости с существующим кодом)
+  // ============================================================
 
   /// Получить список сообщений (заглушка для совместимости)
   Future<List<Message>> getMessages() async {
@@ -243,14 +234,7 @@ class MasterChatService {
 
   /// Очистить историю (заглушка для совместимости)
   Future<void> clearMessages() async {
-    resetSession();
+    // Ничего не делаем, так как сервис stateless
     return;
-  }
-
-  /// Установить текущую сессию (для продолжения диалога)
-  void setSession(String agentId, String sessionId) {
-    _currentAgentId = agentId;
-    _currentSessionId = sessionId;
-    print('🔵 Установлена сессия: агент=$agentId, сессия=$sessionId');
   }
 }
