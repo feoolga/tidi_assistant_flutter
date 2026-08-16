@@ -48,21 +48,26 @@ class MasterChatService {
     try {
       print('🔵 Отправляем сообщение: "$text"');
 
-      // Строим URL и тело запроса
-      final uri = Uri.parse('$_baseUrl/chat');
+      // 👇 ПРАВИЛЬНЫЙ URL для OpenAI-совместимого API
+      final uri = Uri.parse('$_baseUrl/v1/chat/completions');
+      print('🔵 URL: $uri');
 
-      // 👇 ФОРМИРУЕМ ТЕЛО ЗАПРОСА
-      final Map<String, dynamic> body = {'message': text};
+      // 👇 ФОРМИРУЕМ ТЕЛО ЗАПРОСА В ФОРМАТЕ OPENAI
+      final Map<String, dynamic> body = {
+        'messages': [
+          {'role': 'user', 'content': text}
+        ],
+        'stream': true,
+      };
 
-      // 👇 ЕСЛИ У НАС УЖЕ ЕСТЬ АГЕНТ И СЕССИЯ - ПЕРЕДАЕМ ИХ
+      // Если у нас уже есть агент и сессия - передаем их
       if (_currentAgentId != null && _currentSessionId != null) {
-        body['agent_id'] = _currentAgentId;
-        body['session_id'] = _currentSessionId;
-        print(
-          '🔵 Продолжаем диалог с агентом: $_currentAgentId, сессия: $_currentSessionId',
-        );
+        body['model'] = _currentAgentId;
+        body['conversation_id'] = _currentSessionId;
+        print('🔵 Продолжаем диалог с агентом: $_currentAgentId, сессия: $_currentSessionId');
       } else {
-        print('🔵 Новый диалог (агент будет определен сервером)');
+        body['model'] = 'auto';  // 👈 АВТО-РОУТИНГ
+        print('🔵 Новый диалог (авто-роутинг)');
       }
 
       final request = http.Request('POST', uri)
@@ -77,17 +82,12 @@ class MasterChatService {
       print('🔵 Тело: ${request.body}');
 
       final response = await request.send();
-
       print('🔵 Статус ответа: ${response.statusCode}');
 
-      print('🔵 ВСЕ заголовки ответа:');
-      response.headers.forEach((key, value) {
-        print('   $key: $value');
-      });
-
       if (response.statusCode != 200) {
-        print('🔴 Ошибка сервера: ${response.statusCode}');
-        throw Exception('Ошибка сервера: ${response.statusCode}');
+        final errorBody = await response.stream.bytesToString();
+        print('🔴 Ошибка: $errorBody');
+        throw Exception('Ошибка сервера: ${response.statusCode} - $errorBody');
       }
 
       // 👇 ПОЛУЧАЕМ AGENT_ID И SESSION_ID ИЗ ЗАГОЛОВКОВ
@@ -146,14 +146,21 @@ class MasterChatService {
                 continue;
               }
 
-              // Собираем токены
-              if (json.containsKey('token')) {
-                final token =
-                    json['token']
-                        as String; // ← сначала объявляем переменную token
-                fullText += token;
-                print('🔵 Токен: "$token"'); // ← теперь token существует
-                continue;
+              // Собираем токены из OpenAI-формата
+              if (json.containsKey('choices')) {
+                  final choices = json['choices'] as List<dynamic>?;
+                  if (choices != null && choices.isNotEmpty) {
+                      final choice = choices.first as Map<String, dynamic>;
+                      final delta = choice['delta'] as Map<String, dynamic>?;
+                      if (delta != null) {
+                          final content = delta['content'] as String?;
+                          if (content != null && content.isNotEmpty) {
+                              fullText += content;
+                              // print('🔵 Токен: "$content"'); // можно раскомментировать для отладки
+                          }
+                      }
+                  }
+                  continue;
               }
 
               // Получаем message_id
