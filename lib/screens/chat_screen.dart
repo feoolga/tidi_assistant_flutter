@@ -2,7 +2,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/chat_provider.dart';  // 👈 НАШ НОВЫЙ ПРОВАЙДЕР
+import '../providers/chat_provider.dart';
+import '../providers/session_provider.dart';  // 👈 НОВЫЙ ИМПОРТ
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/chat_history_drawer.dart';
@@ -24,8 +25,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    // При создании экрана проверяем, есть ли сообщения
-    // Если нет — будет показано приветственное (оно уже есть в ChatNotifier)
   }
 
   @override
@@ -38,7 +37,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
   // ============================================================
 
-  /// Прокрутка вниз (к последнему сообщению)
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -55,8 +53,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   String _getAgentName(String? agentId) {
     if (agentId == null) return 'AI Ассистент';
     
-    // Пока просто возвращаем ID, позже можно будет загружать из списка агентов
-    // или сделать маппинг
     final agentNames = {
       'chat': 'Чат-агент',
       'epoz': 'ЕПоЗ',
@@ -70,30 +66,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // МЕТОДЫ-ОБРАБОТЧИКИ СОБЫТИЙ
   // ============================================================
 
-  /// Отправить сообщение
   void _sendMessage(String text) {
-    // Получаем notifier и вызываем sendMessage
     ref.read(chatProvider.notifier).sendMessage(text);
-    
-    // Прокручиваем вниз после отправки
     Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }
 
-  /// Загрузить чат из истории
   void _loadChat(String agentId, String chatId) {
     print('📂 Загружаем чат: agentId=$agentId, chatId=$chatId');
     ref.read(chatProvider.notifier).loadChat(agentId, chatId);
   }
 
-  /// Очистить чат
   void _clearChat() {
     ref.read(chatProvider.notifier).clearChat();
   }
 
-  /// Создать новый чат (сброс сессии)
   void _startNewChat() {
     ref.read(chatProvider.notifier).resetSession();
-    // Показываем уведомление
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('🔄 Новый чат создан'),
@@ -108,12 +96,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 👇 ПОДПИСЫВАЕМСЯ НА СОСТОЯНИЕ ЧАТА
+    // 👇 ПОДПИСЫВАЕМСЯ НА СОСТОЯНИЕ ЧАТА (только сообщения)
     final chatState = ref.watch(chatProvider);
     final messages = chatState.messages;
     final isLoading = chatState.isLoading;
-    final currentAgentId = chatState.currentAgentId;
     final error = chatState.error;
+
+    // 👇 ПОЛУЧАЕМ СЕССИЮ ИЗ ОТДЕЛЬНОГО ПРОВАЙДЕРА
+    final sessionState = ref.watch(sessionProvider);
+    final currentAgentId = sessionState.agentId;
 
     // Если есть ошибка — показываем SnackBar
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -125,7 +116,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             duration: const Duration(seconds: 3),
           ),
         );
-        // Очищаем ошибку после показа
         ref.read(chatProvider.notifier).clearError();
       }
     });
