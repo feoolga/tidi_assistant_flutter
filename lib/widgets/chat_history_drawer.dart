@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_history_provider.dart';
+import '../providers/chat_provider.dart';
 import '../providers/agent_provider.dart';
 import '../theme/app_theme.dart';
 
@@ -169,16 +170,21 @@ class ChatHistoryDrawer extends ConsumerWidget {
     // Закрываем drawer
     Navigator.pop(context);
 
-    // Сбрасываем сессию (чтобы следующий запрос пошел через мастера)
-    onResetSession?.call();
+    // Создаем новый чат
+    await ref.read(chatProvider.notifier).createNewChat();
 
-    // Сообщаем родителю, что создан новый чат (без конкретного агента)
-    onChatCreated?.call(); // или просто вызываем без параметра
+    // Сообщаем родителю, что создан новый чат
+    onChatCreated?.call();
 
     // Показываем уведомление
-    // ScaffoldMessenger.of(
-    //   context,
-    // ).showSnackBar(const SnackBar(content: Text('Новый чат создан')));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🆕 Создан новый чат'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
   }
 }
 
