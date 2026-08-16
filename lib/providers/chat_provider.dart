@@ -3,35 +3,20 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/message.dart';
 import '../services/openai_chat_service.dart';
+import '../services/chat_history_service.dart';
 import '../services/service_factory.dart';
 
 // ============================================================
 // ЧАСТЬ 1: СОСТОЯНИЕ ЧАТА (ChatState)
 // ============================================================
 
-/// Состояние чата — неизменяемая (immutable) модель.
-/// Все поля final, изменение только через copyWith.
 class ChatState {
-  // ---- Основные данные ----
-  
-  /// Список сообщений в текущем чате
   final List<Message> messages;
-  
-  /// Флаг загрузки (отправка сообщения или загрузка истории)
   final bool isLoading;
-  
-  /// Текущий агент (если выбран)
   final String? currentAgentId;
-  
-  /// Текущая сессия (если есть)
   final String? currentSessionId;
-  
-  /// Ошибка (если произошла)
   final String? error;
 
-  // ---- Конструкторы ----
-  
-  /// Начальное состояние (пустой чат, без загрузки)
   const ChatState({
     this.messages = const [],
     this.isLoading = false,
@@ -40,13 +25,10 @@ class ChatState {
     this.error,
   });
 
-  /// Фабричный метод для создания начального состояния
   factory ChatState.initial() {
     return const ChatState();
   }
 
-  // ---- copyWith: создание копии с изменениями ----
-  
   ChatState copyWith({
     List<Message>? messages,
     bool? isLoading,
@@ -63,8 +45,6 @@ class ChatState {
     );
   }
 
-  // ---- Вспомогательные геттеры ----
-  
   bool get hasMessages => messages.isNotEmpty;
   bool get hasError => error != null && error!.isNotEmpty;
   bool get hasSession => currentAgentId != null && currentSessionId != null;
@@ -80,14 +60,17 @@ class ChatState {
 // ЧАСТЬ 2: NOTIFIER
 // ============================================================
 
-/// Управляет состоянием чата.
 class ChatNotifier extends StateNotifier<ChatState> {
   final OpenAIChatService _chatService;
+  final ChatHistoryService _chatHistoryService;  // 👈 ДОБАВЛЯЕМ!
 
   // ---- Конструктор ----
   
-  ChatNotifier({required OpenAIChatService chatService})
-      : _chatService = chatService,
+  ChatNotifier({
+    required OpenAIChatService chatService,
+    required ChatHistoryService chatHistoryService,  // 👈 ДОБАВЛЯЕМ!
+  })  : _chatService = chatService,
+        _chatHistoryService = chatHistoryService,  // 👈 ДОБАВЛЯЕМ!
         super(ChatState.initial()) {
     _addWelcomeMessage();
   }
@@ -162,17 +145,43 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _setLoading(true);
     
     try {
+      // 👇 Если нет сессии — создаём чат
+      String? agentId = state.currentAgentId;
+      String? sessionId = state.currentSessionId;
+      
+      if (agentId == null || sessionId == null) {
+        print('🆕 Нет сессии, создаём чат...');
+        
+        // Используем 'chat' как агента по умолчанию
+        final targetAgentId = 'chat';
+        
+        final newChat = await _chatHistoryService.createChat(targetAgentId);
+        
+        agentId = newChat.agentId;
+        sessionId = newChat.id;
+        _setSession(agentId, sessionId);
+        _chatService.setSession(agentId, sessionId);
+        
+        print('✅ Создан чат: $sessionId для агента $agentId');
+      }
+      
+      // Убеждаемся, что agentId и sessionId не null
+      final String finalAgentId = agentId!;
+      final String finalSessionId = sessionId!;
+      
+      // Отправляем сообщение
       final result = await _chatService.sendMessage(text);
       
       final aiMessage = Message.fromAI(
         text: result.text,
-        agentId: result.agentId,
-        sessionId: result.conversationId,
+        agentId: result.agentId ?? finalAgentId,
+        sessionId: result.conversationId ?? finalSessionId,
         id: result.completionId,
       );
       
       _addMessage(aiMessage);
       
+      // Обновляем сессию, если пришла новая
       if (result.agentId != null && result.conversationId != null) {
         _setSession(result.agentId!, result.conversationId!);
       }
@@ -190,27 +199,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _setLoading(true);
     
     try {
-      // Временно заглушка
-      await Future.delayed(const Duration(seconds: 1));
-      
-      final testMessages = [
-        Message.fromUser(text: 'Тестовое сообщение 1'),
-        Message.fromAI(
-          text: 'Тестовый ответ 1',
-          agentId: agentId,
-          sessionId: chatId,
-        ),
-        Message.fromUser(text: 'Тестовое сообщение 2'),
-        Message.fromAI(
-          text: 'Тестовый ответ 2',
-          agentId: agentId,
-          sessionId: chatId,
-        ),
-      ];
-      
-      _setMessages(testMessages);
+      final messages = await _chatHistoryService.getMessages(agentId, chatId);
+      _setMessages(messages);
       _setSession(agentId, chatId);
-      
+      _chatService.setSession(agentId, chatId);
     } catch (e) {
       print('❌ Ошибка в loadChat: $e');
       _setError(e.toString());
@@ -253,7 +245,15 @@ final chatServiceProvider = Provider<OpenAIChatService>((ref) {
   return ServiceFactory.getChatService() as OpenAIChatService;
 });
 
+final chatHistoryServiceProvider = Provider<ChatHistoryService>((ref) {
+  return ServiceFactory.getChatHistoryService();
+});
+
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
-  final service = ref.read(chatServiceProvider);
-  return ChatNotifier(chatService: service);
+  final chatService = ref.read(chatServiceProvider);
+  final chatHistoryService = ref.read(chatHistoryServiceProvider);
+  return ChatNotifier(
+    chatService: chatService,
+    chatHistoryService: chatHistoryService,
+  );
 });
