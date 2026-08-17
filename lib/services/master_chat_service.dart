@@ -10,12 +10,14 @@ class ChatResult {
   final String? messageId;
   final String? agentId;
   final String? sessionId;
+  final String? conversationId;  // 👈 ДОБАВЛЯЕМ
 
   const ChatResult({
     required this.text,
     this.messageId,
     this.agentId,
     this.sessionId,
+    this.conversationId,  // 👈 ДОБАВЛЯЕМ
   });
 
   bool get hasAgentInfo => agentId != null && sessionId != null;
@@ -31,35 +33,46 @@ class MasterChatService {
   }) : _baseUrl = baseUrl,
        _userId = userId;
 
+  /// Отправить сообщение с историей
+  /// 
+  /// [messages] - ВСЯ история диалога (список сообщений)
+  /// [conversationId] - ID чата (если есть)
   Future<ChatResult> sendMessage({
-    required String text,
-    String? agentId,
-    String? sessionId,
+    required List<Message> messages,  // 👈 МЕНЯЕМ: теперь принимаем список
+    String? conversationId,           // 👈 ДОБАВЛЯЕМ
+    String? forceAgentId,             // 👈 если нужно принудительно указать агента
   }) async {
     try {
-      print('🔵 Отправляем сообщение: "$text"');
-      print('🔵 agentId: $agentId, sessionId: $sessionId');
+      print('🔵 Отправляем сообщение с историей (${messages.length} сообщений)');
+      
+      // ---- 1. Строим список messages для API ----
+      final List<Map<String, dynamic>> apiMessages = messages.map((msg) {
+        return {
+          'role': msg.isFromUser ? 'user' : 'assistant',
+          'content': msg.text,
+        };
+      }).toList();
 
-      final uri = Uri.parse('$_baseUrl/v1/chat/completions');
-      print('🔵 URL: $uri');
-
+      // ---- 2. Формируем тело запроса ----
       final Map<String, dynamic> body = {
-        'messages': [
-          {'role': 'user', 'content': text}
-        ],
+        'messages': apiMessages,
         'stream': true,
       };
 
-      if (agentId != null && sessionId != null) {
-        body['model'] = agentId;
-        body['conversation_id'] = sessionId;
-        print('🔵 Продолжаем диалог с агентом: $agentId, сессия: $sessionId');
+      // ---- 3. Определяем модель ----
+      if (conversationId != null && forceAgentId != null) {
+        // Продолжаем существующий чат
+        body['model'] = forceAgentId;
+        body['conversation_id'] = conversationId;
+        print('🔵 Продолжаем диалог: агент=$forceAgentId, чат=$conversationId');
       } else {
+        // Новый диалог — авто-роутинг
         body['model'] = 'auto';
         print('🔵 Новый диалог (авто-роутинг)');
       }
 
-      final request = http.Request('POST', uri)
+      // ---- 4. Отправляем запрос ----
+      final request = http.Request('POST', Uri.parse('$_baseUrl/v1/chat/completions'))
         ..headers.addAll({
           'Content-Type': 'application/json',
           'X-User-Id': _userId,
@@ -74,12 +87,13 @@ class MasterChatService {
         throw Exception('Ошибка сервера: ${response.statusCode} - $errorBody');
       }
 
+      // ---- 5. Парсим SSE-поток ----
       final stream = response.stream;
       String buffer = '';
       String fullText = '';
       String? messageId;
       String? responseAgentId;
-      String? responseSessionId;
+      String? responseConversationId;
 
       await for (final chunk in stream) {
         buffer += utf8.decode(chunk, allowMalformed: true);
@@ -100,40 +114,25 @@ class MasterChatService {
             try {
               final json = jsonDecode(data) as Map<String, dynamic>;
 
-              // 👇 ИЗВЛЕКАЕМ AGENT_ID ИЗ ПОЛЯ model
+              // ---- Извлекаем agentId из поля model ----
               if (json.containsKey('model')) {
                 final model = json['model'] as String?;
                 if (model != null && model != 'auto' && responseAgentId == null) {
                   responseAgentId = model;
-                  print('🔵 Agent ID из model: $responseAgentId');
+                  print('🔵 Агент: $responseAgentId');
                 }
               }
 
-              // 👇 ИЗВЛЕКАЕМ SESSION_ID ИЗ ПОЛЯ id
-              if (json.containsKey('id')) {
-                final id = json['id'] as String?;
-                if (id != null && responseSessionId == null) {
-                  if (id.startsWith('chatcmpl-')) {
-                    responseSessionId = id.substring(8);
-                  } else if (id.startsWith('resp_')) {
-                    responseSessionId = id.substring(5);
-                  } else {
-                    responseSessionId = id;
-                  }
-                  print('🔵 Session ID из id: $responseSessionId');
-                }
-              }
-
-              // 👇 ИЗВЛЕКАЕМ SESSION_ID ИЗ conversation_id
+              // ---- Извлекаем conversationId ----
               if (json.containsKey('conversation_id')) {
                 final convId = json['conversation_id'] as String?;
-                if (convId != null && responseSessionId == null) {
-                  responseSessionId = convId;
-                  print('🔵 Session ID из conversation_id: $responseSessionId');
+                if (convId != null && responseConversationId == null) {
+                  responseConversationId = convId;
+                  print('🔵 conversation_id: $responseConversationId');
                 }
               }
 
-              // Собираем токены
+              // ---- Собираем токены ----
               if (json.containsKey('choices')) {
                 final choices = json['choices'] as List<dynamic>?;
                 if (choices != null && choices.isNotEmpty) {
@@ -161,29 +160,33 @@ class MasterChatService {
         }
       }
 
-      print('🔵 Парсинг SSE завершен');
-      print('🔵 Итоговый agentId: $responseAgentId');
-      print('🔵 Итоговый sessionId: $responseSessionId');
-
+      // ---- 6. Возвращаем результат ----
       String displayText = fullText.trim();
 
+      // Заменяем "Источники:" на "Проанализированные источники:"
       const String oldText = '\n\nИсточники:\n';
       const String newText = '\n\nПроанализированные источники:\n';
-
       if (displayText.contains(oldText)) {
         displayText = displayText.replaceAll(oldText, newText);
       }
+
+      print('✅ Ответ получен, длина: ${displayText.length} символов');
 
       return ChatResult(
         text: displayText,
         messageId: messageId,
         agentId: responseAgentId,
-        sessionId: responseSessionId,
+        sessionId: responseConversationId,  // 👈 conversation_id — это sessionId
+        conversationId: responseConversationId,
       );
     } catch (e) {
       throw Exception('Ошибка при отправке сообщения: $e');
     }
   }
+
+  // ============================================================
+  // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ (оставляем как есть)
+  // ============================================================
 
   Future<List<Message>> getMessages() async {
     return [

@@ -3,15 +3,18 @@
 import '../../services/master_chat_service.dart';
 import '../../services/chat_history_service.dart';
 import '../../models/chat_session.dart';
+import '../../models/message.dart';  // 👈 ДОБАВЛЯЕМ
 
 /// Параметры для отправки сообщения
 class SendMessageParams {
   final String text;
+  final List<Message> history;  // 👈 ДОБАВЛЯЕМ — ВСЯ ИСТОРИЯ
   final String? agentId;
   final String? sessionId;
 
   const SendMessageParams({
     required this.text,
+    required this.history,  // 👈 ДОБАВЛЯЕМ
     this.agentId,
     this.sessionId,
   });
@@ -22,19 +25,10 @@ class SendMessageParams {
 
 /// Результат отправки сообщения
 class SendMessageResult {
-  /// Текст ответа от AI
   final String text;
-
-  /// ID сообщения
   final String? messageId;
-
-  /// ID агента, который обработал запрос
   final String? agentId;
-
-  /// ID сессии (чата) на сервере
   final String? sessionId;
-
-  /// Был ли создан новый чат
   final bool chatCreated;
 
   const SendMessageResult({
@@ -44,37 +38,12 @@ class SendMessageResult {
     this.sessionId,
     this.chatCreated = false,
   });
-
-  /// Есть ли информация об агенте
-  bool get hasAgentInfo => agentId != null && sessionId != null;
-
-  /// Создать копию с новыми данными сессии
-  SendMessageResult copyWithSession({
-    String? agentId,
-    String? sessionId,
-  }) {
-    return SendMessageResult(
-      text: text,
-      messageId: messageId,
-      agentId: agentId ?? this.agentId,
-      sessionId: sessionId ?? this.sessionId,
-      chatCreated: chatCreated,
-    );
-  }
 }
 
 /// UseCase для отправки сообщения
-///
-/// Отвечает за всю бизнес-логику отправки сообщения:
-/// 1. Проверка наличия сессии
-/// 2. Создание нового чата, если сессии нет
-/// 3. Отправка сообщения через MasterChatService
-/// 4. Возврат результата с обновленной информацией о сессии
 class SendMessageUseCase {
   final MasterChatService _chatService;
   final ChatHistoryService _chatHistoryService;
-
-  // 👇 УБИРАЕМ defaultAgentId — теперь агент определяется сервером
 
   SendMessageUseCase({
     required MasterChatService chatService,
@@ -84,28 +53,34 @@ class SendMessageUseCase {
 
   Future<SendMessageResult> execute(SendMessageParams params) async {
     print('📤 UseCase: отправка сообщения "${params.text}"');
+    print('📤 История: ${params.history.length} сообщений');
 
     String? agentId = params.agentId;
     String? sessionId = params.sessionId;
     bool chatCreated = false;
 
-    // 👇 ЕСЛИ НЕТ СЕССИИ — НЕ СОЗДАЕМ ЧАТ, ИСПОЛЬЗУЕМ AUTO-РОУТИНГ
+    // ---- 1. Если нет сессии, используем авто-роутинг ----
     if (agentId == null || sessionId == null) {
-      print('🆕 UseCase: нет сессии, используем авто-роутинг (model: "auto")');
-      // agentId и sessionId остаются null — сервер сам создаст сессию
+      print('🆕 UseCase: нет сессии, авто-роутинг (model: "auto")');
     }
 
-    // ---- Отправляем сообщение ----
+    // ---- 2. Строим историю для отправки ----
+    // Добавляем новое сообщение пользователя в конец истории
+    final List<Message> fullHistory = [
+      ...params.history,
+      Message.fromUser(text: params.text),  // 👈 новое сообщение
+    ];
+
+    // ---- 3. Отправляем сообщение ----
     final result = await _chatService.sendMessage(
-      text: params.text,
-      agentId: agentId,    // может быть null
-      sessionId: sessionId, // может быть null
+      messages: fullHistory,           // 👈 ВСЯ история
+      conversationId: sessionId,       // 👈 ID чата (если есть)
+      forceAgentId: agentId,           // 👈 принудительный агент (если есть)
     );
 
     print('✅ UseCase: сообщение отправлено');
 
-    // ---- Формируем результат ----
-    // Если сервер вернул agentId и sessionId — значит сессия создана
+    // ---- 4. Формируем результат ----
     final bool sessionCreated = result.agentId != null && result.sessionId != null;
 
     return SendMessageResult(
@@ -113,7 +88,7 @@ class SendMessageUseCase {
       messageId: result.messageId,
       agentId: result.agentId,
       sessionId: result.sessionId,
-      chatCreated: sessionCreated,  // true, если сервер создал сессию
+      chatCreated: sessionCreated,
     );
   }
 }

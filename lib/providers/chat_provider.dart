@@ -143,9 +143,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
     try {
       // ---- Получаем текущую сессию ----
+      final currentMessages = state.messages;  // 👈 все сообщения
       final sessionState = _ref.read(sessionProvider);
       final params = SendMessageParams(
         text: text,
+        history: currentMessages,  // 👈 ПЕРЕДАЕМ ВСЮ ИСТОРИЮ
         agentId: sessionState.agentId,
         sessionId: sessionState.sessionId,
       );
