@@ -9,7 +9,8 @@ import '../providers/agent_provider.dart';
 import '../providers/chat_provider.dart';
 import '../theme/app_theme.dart';
 
-class ChatHistoryDrawer extends ConsumerWidget {
+// 👇 МЕНЯЕМ НА ConsumerStatefulWidget
+class ChatHistoryDrawer extends ConsumerStatefulWidget {
   final void Function(String agentId, String chatId) onChatSelected;
   final VoidCallback? onChatCreated;
   final VoidCallback? onResetSession;
@@ -22,21 +23,32 @@ class ChatHistoryDrawer extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // 👇 ИСПОЛЬЗУЕМ НОВЫЙ ПРОВАЙДЕР
+  ConsumerState<ChatHistoryDrawer> createState() => _ChatHistoryDrawerState();
+}
+
+// 👇 НОВЫЙ STATE-КЛАСС
+class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
+  // 👇 ФЛАГ ДЛЯ ПРЕДОТВРАЩЕНИЯ ПОВТОРНОЙ ЗАГРУЗКИ
+  bool _isLoaded = false;
+
+  @override
+  Widget build(BuildContext context) {
     final chats = ref.watch(allChatsProvider);
     final isLoading = ref.watch(chatListLoadingProvider);
     final error = ref.watch(chatListErrorProvider);
 
-    // Загружаем чаты при открытии drawer
+    // 👇 ЗАГРУЖАЕМ ТОЛЬКО ОДИН РАЗ
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadChats(ref);
+      if (!_isLoaded) {
+        _loadChats();
+        _isLoaded = true;
+      }
     });
 
     return Drawer(
       child: Column(
         children: [
-          // Header (без изменений)
+          // Header
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
@@ -71,7 +83,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: () {
-                      _createNewChat(context, ref);
+                      _createNewChat(context);
                     },
                     icon: const Icon(Icons.add, size: 18),
                     label: const Text('Новый чат'),
@@ -91,7 +103,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
 
           // Список чатов
           Expanded(
-            child: _buildChatList(context, ref, chats, isLoading, error),
+            child: _buildChatList(chats, isLoading, error),
           ),
         ],
       ),
@@ -102,7 +114,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
   // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
   // ============================================================
 
-  void _loadChats(WidgetRef ref) {
+  void _loadChats() {
     final agentsState = ref.read(agentsProvider);
     if (agentsState is AsyncData<List<Agent>>) {
       final notifier = ref.read(chatListNotifierProvider.notifier);
@@ -111,7 +123,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
     }
   }
 
-  Future<void> _refreshChats(WidgetRef ref) async {
+  Future<void> _refreshChats() async {
     final agentsState = ref.read(agentsProvider);
     if (agentsState is AsyncData<List<Agent>>) {
       final notifier = ref.read(chatListNotifierProvider.notifier);
@@ -119,16 +131,16 @@ class ChatHistoryDrawer extends ConsumerWidget {
     }
   }
 
-  void _createNewChat(BuildContext context, WidgetRef ref) async {
+  void _createNewChat(BuildContext context) async {
     Navigator.pop(context);
 
     // Создаем новый чат через ChatNotifier
     await ref.read(chatProvider.notifier).createNewChat();
 
-    // 👇 ОБНОВЛЯЕМ СПИСОК ЧАТОВ
-    await _refreshChats(ref);
+    // Обновляем список чатов
+    await _refreshChats();
 
-    onChatCreated?.call();
+    widget.onChatCreated?.call();
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -141,8 +153,6 @@ class ChatHistoryDrawer extends ConsumerWidget {
   }
 
   Widget _buildChatList(
-    BuildContext context,
-    WidgetRef ref,
     List<ChatSession> chats,
     bool isLoading,
     String? error,
@@ -180,7 +190,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: () => _refreshChats(ref),
+                onPressed: _refreshChats,
                 child: const Text('Повторить'),
               ),
             ],
@@ -217,7 +227,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
     }
 
     return RefreshIndicator(
-      onRefresh: () => _refreshChats(ref),
+      onRefresh: _refreshChats,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 8),
         itemCount: chats.length,
@@ -227,7 +237,7 @@ class ChatHistoryDrawer extends ConsumerWidget {
             chat: chat,
             onTap: () {
               Navigator.pop(context);
-              onChatSelected(chat.agentId, chat.id);
+              widget.onChatSelected(chat.agentId, chat.id);
             },
           );
         },
@@ -236,7 +246,10 @@ class ChatHistoryDrawer extends ConsumerWidget {
   }
 }
 
+// ============================================================
 // _ChatItem — без изменений
+// ============================================================
+
 class _ChatItem extends ConsumerWidget {
   final ChatSession chat;
   final VoidCallback onTap;
