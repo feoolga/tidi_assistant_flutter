@@ -147,6 +147,64 @@ class AppHttpClient {
       throw Exception('Ошибка при выполнении POST-запроса (stream): $e');
     }
   }
+
+  /// PATCH-запрос с JSON-телом.
+  Future<http.Response> patch(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? headers,
+  }) async {
+    final uri = _buildUri(path);
+    final allHeaders = _mergeHeaders(headers);
+    final jsonBody = body != null ? jsonEncode(body) : null;
+    
+    print('🌐 PATCH $uri');
+    
+    try {
+      final response = await _client
+          .patch(
+            uri,
+            headers: allHeaders,
+            body: jsonBody,
+          )
+          .timeout(AppConfig.timeout);
+      
+      print('✅ PATCH ${response.statusCode}');
+      _logResponse(response);
+      
+      return response;
+    } on TimeoutException {
+      throw Exception('Превышено время ожидания ответа от сервера');
+    } catch (e) {
+      throw Exception('Ошибка при выполнении PATCH-запроса: $e');
+    }
+  }
+
+  /// DELETE-запрос.
+  Future<http.Response> delete(
+    String path, {
+    Map<String, String>? headers,
+  }) async {
+    final uri = _buildUri(path);
+    final allHeaders = _mergeHeaders(headers);
+    
+    print('🌐 DELETE $uri');
+    
+    try {
+      final response = await _client
+          .delete(uri, headers: allHeaders)
+          .timeout(AppConfig.timeout);
+      
+      print('✅ DELETE ${response.statusCode}');
+      _logResponse(response);
+      
+      return response;
+    } on TimeoutException {
+      throw Exception('Превышено время ожидания ответа от сервера');
+    } catch (e) {
+      throw Exception('Ошибка при выполнении DELETE-запроса: $e');
+    }
+  }
   
   // ============================================================
   // 4. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ

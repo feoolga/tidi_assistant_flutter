@@ -1,80 +1,98 @@
 // lib/services/chat_history_service.dart
 
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../models/chat_session.dart';
 import '../models/message.dart';
+import '../core/network/http_client.dart';
+import '../core/config/app_config.dart';
 
 /// Сервис для работы с историей чатов и сообщениями агентов.
+/// 
 /// Использует новый OpenAI-совместимый API (контракт v2).
+/// Все запросы идут через единый HTTP клиент.
 class ChatHistoryService {
+  // ============================================================
+  // 1. ЗАВИСИМОСТИ
+  // ============================================================
+  
+  /// HTTP клиент для отправки запросов
+  final AppHttpClient _httpClient;
+  
+  /// Базовый URL (оставляем для обратной совместимости)
   final String _baseUrl;
-  final String _userId;
-
+  
+  // ============================================================
+  // 2. КОНСТРУКТОР
+  // ============================================================
+  
+  /// Создает сервис с HTTP клиентом.
   ChatHistoryService({
-    required String baseUrl,
-    String userId = '11111111-1111-1111-1111-111111111111',
-  }) : _baseUrl = baseUrl,
-       _userId = userId;
-
+    String? baseUrl,
+    AppHttpClient? httpClient,
+  })  : _baseUrl = baseUrl ?? AppConfig.baseUrl,
+        _httpClient = httpClient ?? AppHttpClient();
+  
   // ============================================================
-  // ПОЛУЧЕНИЕ ЧАТОВ (CONVERSATIONS)
+  // 3. ПОЛУЧЕНИЕ ЧАТОВ (CONVERSATIONS)
   // ============================================================
-
-  /// Получить все чаты агента
+  
+  /// Получить все чаты агента.
+  /// 
   /// GET /agents/{agentId}/v1/platform/conversations
   Future<List<ChatSession>> getChats(String agentId) async {
-    print('🔵 getChats: agentId=$agentId');
-    print('🔵 URL: $_baseUrl/agents/$agentId/v1/platform/conversations');
+    print('🔵 ChatHistoryService: getChats для агента $agentId');
     
     try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/agents/$agentId/v1/platform/conversations'),
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': _userId,
-        },
+      // ---- 1. Отправляем GET-запрос через наш клиент ----
+      final response = await _httpClient.get(
+        '/agents/$agentId/v1/platform/conversations',
       );
-
-      print('🔵 Статус: ${response.statusCode}');
-      print('🔵 Тело: ${response.body}');
-
+      
+      print('🔵 ChatHistoryService: статус ${response.statusCode}');
+      
+      // ---- 2. Обрабатываем ответ ----
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
-        print('✅ Получено ${data.length} чатов для агента $agentId');
-        return data.map((json) => ChatSession.fromJson(json, agentId)).toList();
+        print('✅ ChatHistoryService: получено ${data.length} чатов');
+        return data
+            .map((json) => ChatSession.fromJson(json, agentId))
+            .toList();
       } else if (response.statusCode == 404) {
         // Агент не поддерживает чаты (например, OCR)
-        print('⚠️ Агент $agentId не поддерживает чаты (404)');
+        print('⚠️ ChatHistoryService: агент $agentId не поддерживает чаты (404)');
         return [];
       } else {
         throw Exception('Ошибка загрузки чатов: ${response.statusCode}');
       }
     } catch (e) {
-      print('⚠️ Не удалось загрузить чаты для агента $agentId: $e');
-      return [];
+      print('⚠️ ChatHistoryService: ошибка для агента $agentId: $e');
+      return []; // Возвращаем пустой список, чтобы не ломать UI
     }
   }
-
+  
   // ============================================================
-  // СОЗДАНИЕ ЧАТА
+  // 4. СОЗДАНИЕ ЧАТА
   // ============================================================
-
-  /// Создать новый чат для агента
+  
+  /// Создать новый чат для агента.
+  /// 
   /// POST /agents/{agentId}/v1/platform/conversations
   Future<ChatSession> createChat(String agentId) async {
+    print('🔵 ChatHistoryService: createChat для агента $agentId');
+    
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/agents/$agentId/v1/platform/conversations'),
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': _userId,
-        },
-        body: jsonEncode({}), // Тело может быть пустым или с title
+      // ---- 1. Отправляем POST-запрос через наш клиент ----
+      final response = await _httpClient.post(
+        '/agents/$agentId/v1/platform/conversations',
+        body: {}, // Тело может быть пустым или с title
       );
-
+      
+      print('🔵 ChatHistoryService: статус ${response.statusCode}');
+      
+      // ---- 2. Обрабатываем ответ ----
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body);
+        print('✅ ChatHistoryService: чат создан');
         return ChatSession.fromJson(data, agentId);
       } else {
         throw Exception('Ошибка создания чата: ${response.statusCode}');
@@ -83,35 +101,40 @@ class ChatHistoryService {
       throw Exception('Не удалось создать чат: $e');
     }
   }
-
+  
   // ============================================================
-  // ПОЛУЧЕНИЕ СООБЩЕНИЙ
+  // 5. ПОЛУЧЕНИЕ СООБЩЕНИЙ
   // ============================================================
-
-  /// Получить сообщения чата
+  
+  /// Получить сообщения чата.
+  /// 
   /// GET /agents/{agentId}/v1/platform/conversations/{conversationId}/messages
-  Future<List<Message>> getMessages(String agentId, String conversationId) async {
+  Future<List<Message>> getMessages(
+    String agentId,
+    String conversationId,
+  ) async {
+    print('🔵 ChatHistoryService: getMessages для чата $conversationId');
+    
     try {
-      final response = await http.get(
-        Uri.parse(
-          '$_baseUrl/agents/$agentId/v1/platform/conversations/$conversationId/messages',
-        ),
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': _userId,
-        },
+      // ---- 1. Отправляем GET-запрос через наш клиент ----
+      final response = await _httpClient.get(
+        '/agents/$agentId/v1/platform/conversations/$conversationId/messages',
       );
-
+      
+      print('🔵 ChatHistoryService: статус ${response.statusCode}');
+      
+      // ---- 2. Обрабатываем ответ ----
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as List;
-        print('📦 Получены сообщения: ${data.length} шт.');
-
+        print('✅ ChatHistoryService: получено ${data.length} сообщений');
+        
+        // Парсим каждое сообщение, пропуская ошибочные
         return data
             .map((json) {
               try {
                 return Message.fromJson(json as Map<String, dynamic>);
               } catch (e) {
-                print('❌ Ошибка парсинга сообщения: $e');
+                print('❌ ChatHistoryService: ошибка парсинга сообщения: $e');
                 return null;
               }
             })
@@ -124,32 +147,34 @@ class ChatHistoryService {
       throw Exception('Не удалось загрузить сообщения: $e');
     }
   }
-
+  
   // ============================================================
-  // ПЕРЕИМЕНОВАНИЕ ЧАТА
+  // 6. ПЕРЕИМЕНОВАНИЕ ЧАТА
   // ============================================================
-
-  /// Переименовать чат
+  
+  /// Переименовать чат.
+  /// 
   /// PATCH /agents/{agentId}/v1/platform/conversations/{conversationId}
   Future<ChatSession> renameChat(
     String agentId,
     String conversationId,
     String newTitle,
   ) async {
+    print('🔵 ChatHistoryService: renameChat $conversationId -> "$newTitle"');
+    
     try {
-      final response = await http.patch(
-        Uri.parse(
-          '$_baseUrl/agents/$agentId/v1/platform/conversations/$conversationId',
-        ),
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': _userId,
-        },
-        body: jsonEncode({'title': newTitle}),
+      // ---- 1. Отправляем PATCH-запрос через наш клиент ----
+      final response = await _httpClient.patch(
+        '/agents/$agentId/v1/platform/conversations/$conversationId',
+        body: {'title': newTitle},
       );
-
+      
+      print('🔵 ChatHistoryService: статус ${response.statusCode}');
+      
+      // ---- 2. Обрабатываем ответ ----
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        print('✅ ChatHistoryService: чат переименован');
         return ChatSession.fromJson(data, agentId);
       } else {
         throw Exception('Ошибка переименования: ${response.statusCode}');
@@ -158,28 +183,34 @@ class ChatHistoryService {
       throw Exception('Не удалось переименовать чат: $e');
     }
   }
-
+  
   // ============================================================
-  // УДАЛЕНИЕ ЧАТА
+  // 7. УДАЛЕНИЕ ЧАТА
   // ============================================================
-
-  /// Удалить чат
+  
+  /// Удалить чат.
+  /// 
   /// DELETE /agents/{agentId}/v1/platform/conversations/{conversationId}
-  Future<void> deleteChat(String agentId, String conversationId) async {
+  Future<void> deleteChat(
+    String agentId,
+    String conversationId,
+  ) async {
+    print('🔵 ChatHistoryService: deleteChat $conversationId');
+    
     try {
-      final response = await http.delete(
-        Uri.parse(
-          '$_baseUrl/agents/$agentId/v1/platform/conversations/$conversationId',
-        ),
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': _userId,
-        },
+      // ---- 1. Отправляем DELETE-запрос через наш клиент ----
+      final response = await _httpClient.delete(
+        '/agents/$agentId/v1/platform/conversations/$conversationId',
       );
-
+      
+      print('🔵 ChatHistoryService: статус ${response.statusCode}');
+      
+      // ---- 2. Обрабатываем ответ ----
       if (response.statusCode != 200 && response.statusCode != 204) {
         throw Exception('Ошибка удаления чата: ${response.statusCode}');
       }
+      
+      print('✅ ChatHistoryService: чат удален');
     } catch (e) {
       throw Exception('Не удалось удалить чат: $e');
     }
