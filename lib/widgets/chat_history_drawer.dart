@@ -8,6 +8,7 @@ import '../models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../providers/chat_provider.dart';
 import '../theme/app_theme.dart';
+import '../services/chat_session_service.dart';
 
 // 👇 МЕНЯЕМ НА ConsumerStatefulWidget
 class ChatHistoryDrawer extends ConsumerStatefulWidget {
@@ -133,15 +134,15 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
 
   void _createNewChat(BuildContext context) async {
     Navigator.pop(context);
-
-    // Создаем новый чат через ChatNotifier
-    await ref.read(chatProvider.notifier).createNewChat();
-
+    
+    // 👇 ИСПОЛЬЗУЕМ СЕРВИС
+    ref.read(chatSessionServiceProvider).startNewDialog();
+    
     // Обновляем список чатов
     await _refreshChats();
-
+    
     widget.onChatCreated?.call();
-
+    
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

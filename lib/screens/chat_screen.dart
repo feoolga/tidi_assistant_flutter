@@ -3,10 +3,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/chat_provider.dart';
-import '../providers/session_provider.dart';  // 👈 НОВЫЙ ИМПОРТ
+import '../providers/session_provider.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/chat_history_drawer.dart';
+import '../services/chat_session_service.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -67,13 +68,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // ============================================================
 
   void _sendMessage(String text) {
-    ref.read(chatProvider.notifier).sendMessage(text);
+    // Берем сессию из провайдера
+    final sessionState = ref.read(sessionProvider);
+    
+    // Отправляем сообщение
+    ref.read(chatProvider.notifier).sendMessage(
+      text: text,
+      agentId: sessionState.agentId,
+      sessionId: sessionState.sessionId,
+    );
+    
     Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }
 
   void _loadChat(String agentId, String chatId) {
     print('📂 Загружаем чат: agentId=$agentId, chatId=$chatId');
-    ref.read(chatProvider.notifier).loadChat(agentId, chatId);
+    
+    // 👇 ИСПОЛЬЗУЕМ СЕРВИС
+    ref.read(chatSessionServiceProvider).loadChat(agentId, chatId);
   }
 
   void _clearChat() {
@@ -81,7 +93,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   void _startNewChat() {
-    ref.read(chatProvider.notifier).resetSession();
+    // 👇 ИСПОЛЬЗУЕМ СЕРВИС
+    ref.read(chatSessionServiceProvider).startNewDialog();
+    
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('🔄 Новый чат создан'),
@@ -127,9 +141,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           _loadChat(agentId, chatId);
         },
         onChatCreated: _startNewChat,
-        onResetSession: () {
-          ref.read(chatProvider.notifier).resetSession();
-        },
       ),
       appBar: AppBar(
         leading: Builder(

@@ -2,28 +2,34 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/message.dart';
-import '../models/agent.dart';  // 👈 ДОБАВЛЯЕМ
+import '../models/agent.dart';
 import '../services/master_chat_service.dart';
 import '../services/chat_history_service.dart';
 import '../services/service_factory.dart';
 import '../domain/usecases/send_message_usecase.dart';
 import 'session_provider.dart';
 import 'chat_list_provider.dart';
-import 'agent_provider.dart';  // 👈 ДОБАВЛЯЕМ
+import 'agent_provider.dart';
 
 // ============================================================
 // ЧАСТЬ 1: СОСТОЯНИЕ ЧАТА (только сообщения и статус)
 // ============================================================
 
+/// Состояние чата - только сообщения и статус загрузки.
+/// 
+/// Важно: здесь НЕТ agentId и sessionId!
+/// Они хранятся в отдельном провайдере - sessionProvider.
 class ChatState {
   final List<Message> messages;
   final bool isLoading;
   final String? error;
+  final bool isStreaming; // 👈 НОВОЕ: идет ли сейчас стрим
 
   const ChatState({
     this.messages = const [],
     this.isLoading = false,
     this.error,
+    this.isStreaming = false,
   });
 
   factory ChatState.initial() {
@@ -34,11 +40,13 @@ class ChatState {
     List<Message>? messages,
     bool? isLoading,
     String? error,
+    bool? isStreaming,
   }) {
     return ChatState(
       messages: messages ?? this.messages,
       isLoading: isLoading ?? this.isLoading,
       error: error ?? this.error,
+      isStreaming: isStreaming ?? this.isStreaming,
     );
   }
 
@@ -47,7 +55,7 @@ class ChatState {
 
   @override
   String toString() {
-    return 'ChatState(messages: ${messages.length}, isLoading: $isLoading, error: $error)';
+    return 'ChatState(messages: ${messages.length}, isLoading: $isLoading, isStreaming: $isStreaming, error: $error)';
   }
 }
 
@@ -56,27 +64,22 @@ class ChatState {
 // ============================================================
 
 class ChatNotifier extends StateNotifier<ChatState> {
-  // Сервисы
+  // ---- Сервисы ----
   final ChatHistoryService _chatHistoryService;
-
-  // 👇 ИСПОЛЬЗУЕМ USECASE ВМЕСТО ПРЯМОГО ВЫЗОВА СЕРВИСА
   final SendMessageUseCase _sendMessageUseCase;
-
-  // Ссылка на провайдер сессии
-  final Ref _ref;
+  
+  // ---- Callback для обновления сессии ----
+  final void Function(String agentId, String sessionId)? onSessionChanged;
 
   // ---- Конструктор ----
-
   ChatNotifier({
     required ChatHistoryService chatHistoryService,
     required SendMessageUseCase sendMessageUseCase,
-    required Ref ref,
+    this.onSessionChanged,
   })  : _chatHistoryService = chatHistoryService,
         _sendMessageUseCase = sendMessageUseCase,
-        _ref = ref,
         super(ChatState.initial()) {
     _addWelcomeMessage();
-    _listenToSessionChanges();
   }
 
   // ============================================================
@@ -95,18 +98,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  void _listenToSessionChanges() {
-    _ref.listen<ChatSessionState>(sessionProvider, (previous, next) {
-      if (next.hasSession) {
-        print('🔄 ChatNotifier: сессия изменилась: агент=${next.agentId}, conversation=${next.sessionId}');
-      } else {
-        print('🔄 ChatNotifier: сессия сброшена');
-      }
-    });
-  }
-
   void _setLoading(bool isLoading) {
     state = state.copyWith(isLoading: isLoading);
+  }
+
+  void _setStreaming(bool isStreaming) {
+    state = state.copyWith(isStreaming: isStreaming);
   }
 
   void _setError(String? error) {
@@ -131,31 +128,39 @@ class ChatNotifier extends StateNotifier<ChatState> {
   // ПУБЛИЧНЫЕ МЕТОДЫ
   // ============================================================
 
-  /// Отправить сообщение
-  ///
-  /// Логика полностью делегирована SendMessageUseCase
-  Future<void> sendMessage(String text) async {
+  /// Отправить сообщение.
+  /// 
+  /// [agentId] - ID агента (если есть)
+  /// [sessionId] - ID сессии (если есть)
+  Future<void> sendMessage({
+    required String text,
+    String? agentId,
+    String? sessionId,
+  }) async {
     print('📤 ChatNotifier: sendMessage "$text"');
+    print('📤 ChatNotifier: agentId=$agentId, sessionId=$sessionId');
 
     _clearError();
     _addMessage(Message.fromUser(text: text));
     _setLoading(true);
+    _setStreaming(true);
 
     try {
-      // ---- Получаем текущую сессию ----
-      final currentMessages = state.messages;  // 👈 все сообщения
-      final sessionState = _ref.read(sessionProvider);
+      // ---- 1. Получаем текущие сообщения (историю) ----
+      final currentMessages = state.messages;
+
+      // ---- 2. Строим параметры для UseCase ----
       final params = SendMessageParams(
         text: text,
-        history: currentMessages,  // 👈 ПЕРЕДАЕМ ВСЮ ИСТОРИЮ
-        agentId: sessionState.agentId,
-        sessionId: sessionState.sessionId,
+        history: currentMessages,
+        agentId: agentId,
+        sessionId: sessionId,
       );
 
-      // ---- Выполняем UseCase ----
+      // ---- 3. Выполняем UseCase ----
       final result = await _sendMessageUseCase.execute(params);
 
-      // ---- Обновляем UI ----
+      // ---- 4. Обновляем UI ----
       final aiMessage = Message.fromAI(
         text: result.text,
         agentId: result.agentId,
@@ -163,44 +168,44 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
       _addMessage(aiMessage);
 
-      // ---- Обновляем сессию, если она изменилась ----
-      final currentSession = _ref.read(sessionProvider);
-      if (currentSession.agentId != result.agentId ||
-          currentSession.sessionId != result.sessionId) {
-        _ref.read(sessionProvider.notifier).setSession(
-              result.agentId!,
-              result.sessionId!,
-            );
-        print('🔄 ChatNotifier: сессия обновлена из UseCase');
+      // ---- 5. Сообщаем об изменении сессии (если она изменилась) ----
+      if (result.agentId != null && result.sessionId != null) {
+        // Проверяем, изменилась ли сессия
+        final currentAgentId = agentId;
+        final currentSessionId = sessionId;
+        
+        if (currentAgentId != result.agentId || 
+            currentSessionId != result.sessionId) {
+          print('🔄 ChatNotifier: сессия изменилась!');
+          print('   Было: агент=$currentAgentId, чат=$currentSessionId');
+          print('   Стало: агент=${result.agentId}, чат=${result.sessionId}');
+          
+          // Вызываем callback, чтобы обновить sessionProvider
+          onSessionChanged?.call(result.agentId!, result.sessionId!);
+        }
       }
-      // 👇 НОВОЕ: Обновляем список чатов, если был создан новый чат
+
+      // ---- 6. Если создан новый чат - обновляем список ----
       if (result.chatCreated) {
         print('✅ ChatNotifier: новый чат создан, обновляем список...');
-        await _refreshChatList();
+        // TODO: обновить список чатов через callback
+        // Пока просто логируем
       }
-      if (result.chatCreated) {
-        print('✅ ChatNotifier: новый чат создан через UseCase');
-      }
+
+      print('✅ ChatNotifier: сообщение отправлено успешно');
+      
     } catch (e) {
       print('❌ ChatNotifier: ошибка в sendMessage: $e');
       _setError(e.toString());
     } finally {
       _setLoading(false);
+      _setStreaming(false);
     }
   }
 
-  Future<void> _refreshChatList() async {
-    final agentsState = _ref.read(agentsProvider);
-    if (agentsState is AsyncData<List<Agent>>) {
-      final notifier = _ref.read(chatListNotifierProvider.notifier);
-      await notifier.refresh(agents: agentsState.value);
-      print('✅ ChatNotifier: список чатов обновлен');
-    }
-  }
-
-  /// Загрузить чат из истории
+  /// Загрузить чат из истории.
   Future<void> loadChat(String agentId, String chatId) async {
-    print('📂 loadChat: agentId=$agentId, chatId=$chatId');
+    print('📂 ChatNotifier: loadChat агент=$agentId, чат=$chatId');
 
     _setLoading(true);
     _clearError();
@@ -208,64 +213,43 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       final messages = await _chatHistoryService.getMessages(agentId, chatId);
       _setMessages(messages);
-      _ref.read(sessionProvider.notifier).setSession(agentId, chatId);
-      print('✅ Загружено сообщений: ${messages.length}');
+      
+      // Сообщаем об изменении сессии
+      onSessionChanged?.call(agentId, chatId);
+      
+      print('✅ ChatNotifier: загружено ${messages.length} сообщений');
     } catch (e) {
-      print('❌ Ошибка в loadChat: $e');
+      print('❌ ChatNotifier: ошибка в loadChat: $e');
       _setError(e.toString());
     } finally {
       _setLoading(false);
     }
   }
 
-  /// Создать новый пустой чат
-  ///
-  /// Используется при нажатии кнопки "Новый чат"
+  /// Создать новый пустой чат.
   Future<void> createNewChat() async {
-    print('🆕 createNewChat: создаем новый пустой чат...');
+    print('🆕 ChatNotifier: createNewChat');
 
-    // Очищаем сообщения и добавляем приветственное
     _setMessages([]);
     _addWelcomeMessage();
-
-    // Очищаем ошибку
     _clearError();
-
-    // 👇 СБРАСЫВАЕМ СЕССИЮ (чат создастся на сервере при первом сообщении)
-    _ref.read(sessionProvider.notifier).clearSession();
-
-    print('✅ createNewChat: сессия сброшена, ожидаем первый вопрос');
+    
+    // Сообщаем, что сессия сброшена
+    // onSessionChanged?.call(null, null); // 👈 пока не используем
+    print('✅ ChatNotifier: новый чат создан');
   }
 
-  /// Очистить чат
+  /// Очистить чат.
   void clearChat() {
-    print('🗑️ clearChat');
+    print('🗑️ ChatNotifier: clearChat');
     _setMessages([]);
     _addWelcomeMessage();
     _clearError();
-    _ref.read(sessionProvider.notifier).clearSession();
   }
 
-  /// Сбросить сессию
-  void resetSession() {
-    print('🔄 resetSession');
-    _ref.read(sessionProvider.notifier).clearSession();
-    _clearError();
-  }
-
-  /// Очистить ошибку
+  /// Очистить ошибку.
   void clearError() {
     _clearError();
-  }
-
-  /// Получить текущий ID агента
-  String? get currentAgentId {
-    return _ref.read(sessionProvider).agentId;
-  }
-
-  /// Получить текущий ID сессии
-  String? get currentSessionId {
-    return _ref.read(sessionProvider).sessionId;
   }
 }
 
@@ -283,7 +267,7 @@ final chatHistoryServiceProvider = Provider<ChatHistoryService>((ref) {
   return ServiceFactory.getChatHistoryService();
 });
 
-/// 👇 НОВЫЙ ПРОВАЙДЕР: SendMessageUseCase
+/// Провайдер для SendMessageUseCase
 final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
   final chatService = ref.read(chatServiceProvider);
   final chatHistoryService = ref.read(chatHistoryServiceProvider);
@@ -293,7 +277,9 @@ final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
   );
 });
 
-/// Основной провайдер чата
+/// Основной провайдер чата.
+/// 
+/// Теперь он принимает callback для обновления сессии.
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
   final chatHistoryService = ref.read(chatHistoryServiceProvider);
   final sendMessageUseCase = ref.read(sendMessageUseCaseProvider);
@@ -301,6 +287,9 @@ final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
   return ChatNotifier(
     chatHistoryService: chatHistoryService,
     sendMessageUseCase: sendMessageUseCase,
-    ref: ref,
+    onSessionChanged: (agentId, sessionId) {
+      // 👈 Обновляем sessionProvider через callback
+      ref.read(sessionProvider.notifier).setSession(agentId, sessionId);
+    },
   );
 });
