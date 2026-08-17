@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
 import '../models/agent.dart';
 import '../services/chat_history_service.dart';  // 👈 ДОБАВЛЯЕМ
-import 'agent_provider.dart';
 import 'chat_provider.dart';  // 👈 ДЛЯ chatHistoryServiceProvider
 
 // ============================================================
