@@ -74,8 +74,7 @@ class SendMessageUseCase {
   final MasterChatService _chatService;
   final ChatHistoryService _chatHistoryService;
 
-  /// ID агента по умолчанию для создания нового чата
-  static const String defaultAgentId = 'chat';
+  // 👇 УБИРАЕМ defaultAgentId — теперь агент определяется сервером
 
   SendMessageUseCase({
     required MasterChatService chatService,
@@ -83,60 +82,38 @@ class SendMessageUseCase {
   }) : _chatService = chatService,
        _chatHistoryService = chatHistoryService;
 
-  /// Выполнить отправку сообщения
-  ///
-  /// [params] — параметры запроса
-  ///
-  /// Возвращает [SendMessageResult] с ответом и обновленной сессией
   Future<SendMessageResult> execute(SendMessageParams params) async {
     print('📤 UseCase: отправка сообщения "${params.text}"');
 
-    // ---- Шаг 1: Определяем сессию ----
     String? agentId = params.agentId;
     String? sessionId = params.sessionId;
     bool chatCreated = false;
 
-    // Если нет сессии — создаем новый чат
+    // 👇 ЕСЛИ НЕТ СЕССИИ — НЕ СОЗДАЕМ ЧАТ, ИСПОЛЬЗУЕМ AUTO-РОУТИНГ
     if (agentId == null || sessionId == null) {
-      print('🆕 UseCase: создаем новый чат...');
-
-      final newChat = await _chatHistoryService.createChat(defaultAgentId);
-      agentId = newChat.agentId;
-      sessionId = newChat.id;
-      chatCreated = true;
-
-      print('✅ UseCase: создан чат: agentId=$agentId, sessionId=$sessionId');
+      print('🆕 UseCase: нет сессии, используем авто-роутинг (model: "auto")');
+      // agentId и sessionId остаются null — сервер сам создаст сессию
     }
 
-    // ---- Шаг 2: Отправляем сообщение ----
+    // ---- Отправляем сообщение ----
     final result = await _chatService.sendMessage(
       text: params.text,
-      agentId: agentId,
-      sessionId: sessionId,
+      agentId: agentId,    // может быть null
+      sessionId: sessionId, // может быть null
     );
 
     print('✅ UseCase: сообщение отправлено');
 
-    // ---- Шаг 3: Формируем результат ----
-    // Если сервер вернул новые agentId/sessionId — используем их
-    final String? finalAgentId = result.agentId ?? agentId;
-    final String? finalSessionId = result.sessionId ?? sessionId;
-
-    // Проверяем, изменилась ли сессия
-    final bool sessionChanged =
-        (result.agentId != null && result.agentId != agentId) ||
-        (result.sessionId != null && result.sessionId != sessionId);
-
-    if (sessionChanged) {
-      print('🔄 UseCase: сессия обновлена: agentId=$finalAgentId, sessionId=$finalSessionId');
-    }
+    // ---- Формируем результат ----
+    // Если сервер вернул agentId и sessionId — значит сессия создана
+    final bool sessionCreated = result.agentId != null && result.sessionId != null;
 
     return SendMessageResult(
       text: result.text,
       messageId: result.messageId,
-      agentId: finalAgentId,
-      sessionId: finalSessionId,
-      chatCreated: chatCreated,
+      agentId: result.agentId,
+      sessionId: result.sessionId,
+      chatCreated: sessionCreated,  // true, если сервер создал сессию
     );
   }
 }

@@ -2,11 +2,14 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/message.dart';
+import '../models/agent.dart';  // 👈 ДОБАВЛЯЕМ
 import '../services/master_chat_service.dart';
 import '../services/chat_history_service.dart';
 import '../services/service_factory.dart';
-import '../domain/usecases/send_message_usecase.dart'; // 👈 НОВЫЙ ИМПОРТ
+import '../domain/usecases/send_message_usecase.dart';
 import 'session_provider.dart';
+import 'chat_list_provider.dart';
+import 'agent_provider.dart';  // 👈 ДОБАВЛЯЕМ
 
 // ============================================================
 // ЧАСТЬ 1: СОСТОЯНИЕ ЧАТА (только сообщения и статус)
@@ -168,7 +171,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
             );
         print('🔄 ChatNotifier: сессия обновлена из UseCase');
       }
-
+      // 👇 НОВОЕ: Обновляем список чатов, если был создан новый чат
+      if (result.chatCreated) {
+        print('✅ ChatNotifier: новый чат создан, обновляем список...');
+        await _refreshChatList();
+      }
       if (result.chatCreated) {
         print('✅ ChatNotifier: новый чат создан через UseCase');
       }
@@ -177,6 +184,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
       _setError(e.toString());
     } finally {
       _setLoading(false);
+    }
+  }
+
+  Future<void> _refreshChatList() async {
+    final agentsState = _ref.read(agentsProvider);
+    if (agentsState is AsyncData<List<Agent>>) {
+      final notifier = _ref.read(chatListNotifierProvider.notifier);
+      await notifier.refresh(agents: agentsState.value);
+      print('✅ ChatNotifier: список чатов обновлен');
     }
   }
 
@@ -204,33 +220,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
   ///
   /// Используется при нажатии кнопки "Новый чат"
   Future<void> createNewChat() async {
-    print('🆕 createNewChat: создаем новый чат...');
+    print('🆕 createNewChat: создаем новый пустой чат...');
 
-    _setLoading(true);
+    // Очищаем сообщения и добавляем приветственное
+    _setMessages([]);
+    _addWelcomeMessage();
+
+    // Очищаем ошибку
     _clearError();
 
-    try {
-      // Создаем чат на сервере
-      const defaultAgentId = 'chat';
-      final newChat = await _chatHistoryService.createChat(defaultAgentId);
+    // 👇 СБРАСЫВАЕМ СЕССИЮ (чат создастся на сервере при первом сообщении)
+    _ref.read(sessionProvider.notifier).clearSession();
 
-      // Очищаем сообщения и добавляем приветственное
-      _setMessages([]);
-      _addWelcomeMessage();
-
-      // Устанавливаем новую сессию
-      _ref.read(sessionProvider.notifier).setSession(
-            newChat.agentId,
-            newChat.id,
-          );
-
-      print('✅ createNewChat: создан чат agentId=${newChat.agentId}, sessionId=${newChat.id}');
-    } catch (e) {
-      print('❌ createNewChat: ошибка $e');
-      _setError('Не удалось создать новый чат: $e');
-    } finally {
-      _setLoading(false);
-    }
+    print('✅ createNewChat: сессия сброшена, ожидаем первый вопрос');
   }
 
   /// Очистить чат

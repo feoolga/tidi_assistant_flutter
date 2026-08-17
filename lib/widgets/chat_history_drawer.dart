@@ -3,9 +3,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
-import '../providers/chat_history_provider.dart';
-import '../providers/chat_provider.dart';
+import '../providers/chat_list_provider.dart';
+import '../models/agent.dart';
 import '../providers/agent_provider.dart';
+import '../providers/chat_provider.dart';
 import '../theme/app_theme.dart';
 
 class ChatHistoryDrawer extends ConsumerWidget {
@@ -22,12 +23,20 @@ class ChatHistoryDrawer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final allChatsAsync = ref.watch(allChatsProvider);
+    // 👇 ИСПОЛЬЗУЕМ НОВЫЙ ПРОВАЙДЕР
+    final chats = ref.watch(allChatsProvider);
+    final isLoading = ref.watch(chatListLoadingProvider);
+    final error = ref.watch(chatListErrorProvider);
+
+    // Загружаем чаты при открытии drawer
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadChats(ref);
+    });
 
     return Drawer(
       child: Column(
         children: [
-          // Header
+          // Header (без изменений)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
@@ -58,7 +67,6 @@ class ChatHistoryDrawer extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                // Кнопка "Новый чат"
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -81,102 +89,47 @@ class ChatHistoryDrawer extends ConsumerWidget {
             ),
           ),
 
-          // Список чатов (остается без изменений)
+          // Список чатов
           Expanded(
-            child: allChatsAsync.when(
-              data: (chats) {
-                if (chats.isEmpty) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.chat_bubble_outline,
-                            size: 48,
-                            color: Colors.grey,
-                          ),
-                          SizedBox(height: 16),
-                          Text(
-                            'Нет чатов',
-                            style: TextStyle(fontSize: 16, color: Colors.grey),
-                          ),
-                          Text(
-                            'Начните новый диалог',
-                            style: TextStyle(fontSize: 14, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-
-                return ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: chats.length,
-                  itemBuilder: (context, index) {
-                    final chat = chats[index];
-                    return _ChatItem(
-                      chat: chat,
-                      onTap: () {
-                        Navigator.pop(context);
-                        onChatSelected(chat.agentId, chat.id);
-                      },
-                    );
-                  },
-                );
-              },
-              loading: () => const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: CircularProgressIndicator(),
-                ),
-              ),
-              error: (error, stack) => Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.error_outline,
-                        size: 48,
-                        color: Colors.red,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Ошибка загрузки чатов',
-                        style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                      ),
-                      Text(
-                        error.toString(),
-                        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+            child: _buildChatList(context, ref, chats, isLoading, error),
           ),
         ],
       ),
     );
   }
 
-  // 👇 НОВЫЙ МЕТОД: создание нового чата
+  // ============================================================
+  // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+  // ============================================================
+
+  void _loadChats(WidgetRef ref) {
+    final agentsState = ref.read(agentsProvider);
+    if (agentsState is AsyncData<List<Agent>>) {
+      final notifier = ref.read(chatListNotifierProvider.notifier);
+      notifier.updateAgents(agentsState.value);
+      notifier.loadAllChats(agentsState.value);
+    }
+  }
+
+  Future<void> _refreshChats(WidgetRef ref) async {
+    final agentsState = ref.read(agentsProvider);
+    if (agentsState is AsyncData<List<Agent>>) {
+      final notifier = ref.read(chatListNotifierProvider.notifier);
+      await notifier.refresh(agents: agentsState.value);
+    }
+  }
+
   void _createNewChat(BuildContext context, WidgetRef ref) async {
-    // Закрываем drawer
     Navigator.pop(context);
 
-    // Создаем новый чат
+    // Создаем новый чат через ChatNotifier
     await ref.read(chatProvider.notifier).createNewChat();
 
-    // Сообщаем родителю, что создан новый чат
+    // 👇 ОБНОВЛЯЕМ СПИСОК ЧАТОВ
+    await _refreshChats(ref);
+
     onChatCreated?.call();
 
-    // Показываем уведомление
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -186,9 +139,104 @@ class ChatHistoryDrawer extends ConsumerWidget {
       );
     }
   }
+
+  Widget _buildChatList(
+    BuildContext context,
+    WidgetRef ref,
+    List<ChatSession> chats,
+    bool isLoading,
+    String? error,
+  ) {
+    if (isLoading && chats.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (error != null && chats.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.error_outline,
+                size: 48,
+                color: Colors.red,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Ошибка загрузки чатов',
+                style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+              ),
+              Text(
+                error,
+                style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => _refreshChats(ref),
+                child: const Text('Повторить'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (chats.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.chat_bubble_outline,
+                size: 48,
+                color: Colors.grey,
+              ),
+              SizedBox(height: 16),
+              Text(
+                'Нет чатов',
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+              Text(
+                'Начните новый диалог',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: () => _refreshChats(ref),
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: chats.length,
+        itemBuilder: (context, index) {
+          final chat = chats[index];
+          return _ChatItem(
+            chat: chat,
+            onTap: () {
+              Navigator.pop(context);
+              onChatSelected(chat.agentId, chat.id);
+            },
+          );
+        },
+      ),
+    );
+  }
 }
 
-// _ChatItem остается без изменений
+// _ChatItem — без изменений
 class _ChatItem extends ConsumerWidget {
   final ChatSession chat;
   final VoidCallback onTap;
