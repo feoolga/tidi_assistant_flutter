@@ -152,7 +152,7 @@ class ChatRepository {
   }
 
   // ============================================================
-  // 5. РАБОТА С СООБЩЕНИЯМИ (ПОКА ЗАГЛУШКА)
+  // 5. РАБОТА С СООБЩЕНИЯМИ
   // ============================================================
 
   /// Отправить сообщение и получить ответ.
@@ -166,9 +166,165 @@ class ChatRepository {
     String? conversationId,
     String? forceAgentId,
   }) async {
-    // TODO: Реализовать, когда заработает /v1/chat/completions
-    throw UnimplementedError(
-      'sendMessage пока не реализован, ждем починки бэкенда',
+    try {
+      print(
+        '🔵 ChatRepository: отправка сообщения (${messages.length} сообщений)',
+      );
+
+      // ---- 1. Строим список messages для API ----
+      final List<Map<String, dynamic>> apiMessages = messages.map((msg) {
+        return {
+          'role': msg.isFromUser ? 'user' : 'assistant',
+          'content': msg.text,
+        };
+      }).toList();
+
+      // ---- 2. Формируем тело запроса ----
+      final Map<String, dynamic> body = {
+        'messages': apiMessages,
+        'stream': true,
+      };
+
+      // ---- 3. Определяем модель ----
+      if (conversationId != null && forceAgentId != null) {
+        // Продолжаем существующий чат
+        body['model'] = forceAgentId;
+        body['conversation_id'] = conversationId;
+        print(
+          '🔵 ChatRepository: продолжаем диалог (агент=$forceAgentId, чат=$conversationId)',
+        );
+      } else {
+        // Новый диалог — авто-роутинг
+        body['model'] = 'auto';
+        print('🔵 ChatRepository: новый диалог (авто-роутинг)');
+      }
+
+      // ---- 4. Отправляем запрос через API ----
+      final response = await _api.sendMessage(body: body);
+
+      // ---- 5. Проверяем статус ----
+      if (response.statusCode != 200) {
+        final errorBody = await response.stream.bytesToString();
+        throw Exception('Ошибка сервера: ${response.statusCode} - $errorBody');
+      }
+
+      // ---- 6. Парсим SSE-поток ----
+      return await _parseSseStream(response.stream);
+    } catch (e) {
+      print('❌ ChatRepository: ошибка: $e');
+      throw Exception('Ошибка при отправке сообщения: $e');
+    }
+  }
+
+  /// Парсит SSE-поток и собирает ответ.
+  ///
+  /// Возвращает ChatResponseDto с полным текстом и метаданными.
+  Future<ChatResponseDto> _parseSseStream(Stream<List<int>> stream) async {
+    String buffer = '';
+    String fullText = '';
+    String id = '';
+    String model = 'auto';
+    String? conversationId;
+
+    print('🔵 ChatRepository: начинаем парсинг SSE-потока');
+
+    // Читаем поток по частям
+    await for (final chunk in stream) {
+      // Декодируем байты в строку
+      buffer += utf8.decode(chunk, allowMalformed: true);
+
+      // Разбиваем на строки
+      final lines = buffer.split('\n');
+      buffer = lines.last;
+
+      // Обрабатываем все полные строки
+      for (int i = 0; i < lines.length - 1; i++) {
+        final line = lines[i];
+
+        // Ищем строки с data:
+        if (line.startsWith('data: ')) {
+          final data = line.substring(6).trim();
+
+          // Проверяем на завершение потока
+          if (data == '[DONE]') {
+            print('🔵 ChatRepository: поток завершен [DONE]');
+            break;
+          }
+
+          // Пропускаем пустые строки
+          if (data.isEmpty) continue;
+
+          try {
+            // Парсим JSON
+            final json = jsonDecode(data) as Map<String, dynamic>;
+
+            // ---- Извлекаем model (агента) ----
+            if (json.containsKey('model')) {
+              final modelValue = json['model'] as String?;
+              if (modelValue != null && modelValue != 'auto') {
+                model = modelValue;
+                print('🔵 ChatRepository: агент определен: $model');
+              }
+            }
+
+            // ---- Извлекаем conversationId ----
+            if (json.containsKey('conversation_id')) {
+              final convId = json['conversation_id'] as String?;
+              if (convId != null && conversationId == null) {
+                conversationId = convId;
+                print('🔵 ChatRepository: conversation_id: $conversationId');
+              }
+            }
+
+            // ---- Извлекаем id сообщения ----
+            if (json.containsKey('id')) {
+              final idValue = json['id'] as String?;
+              if (idValue != null && id.isEmpty) {
+                id = idValue;
+              }
+            }
+
+            // ---- Собираем токены из choices ----
+            if (json.containsKey('choices')) {
+              final choices = json['choices'] as List<dynamic>?;
+              if (choices != null && choices.isNotEmpty) {
+                final choice = choices.first as Map<String, dynamic>;
+                final delta = choice['delta'] as Map<String, dynamic>?;
+                if (delta != null) {
+                  final content = delta['content'] as String?;
+                  if (content != null && content.isNotEmpty) {
+                    fullText += content;
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            print('⚠️ ChatRepository: ошибка парсинга JSON: $e');
+            print('📄 Строка: $data');
+            continue;
+          }
+        }
+      }
+    }
+
+    // ---- Формируем результат ----
+    String displayText = fullText.trim();
+
+    // Заменяем "Источники:" на "Проанализированные источники:"
+    const String oldText = '\n\nИсточники:\n';
+    const String newText = '\n\nПроанализированные источники:\n';
+    if (displayText.contains(oldText)) {
+      displayText = displayText.replaceAll(oldText, newText);
+    }
+
+    print('✅ ChatRepository: ответ получен (${displayText.length} символов)');
+    print('🔵 ChatRepository: агент=$model, чат=$conversationId');
+
+    return ChatResponseDto(
+      id: id,
+      model: model,
+      conversationId: conversationId,
+      content: displayText,
     );
   }
 }
