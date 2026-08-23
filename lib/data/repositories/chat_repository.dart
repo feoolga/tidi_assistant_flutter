@@ -3,9 +3,9 @@
 import 'dart:convert';
 import '../datasources/remote/chat_api.dart';
 import '../models/chat_response_dto.dart';
-import '../../models/agent.dart';
-import '../../models/chat_session.dart';
-import '../../models/message.dart';
+import '../../domain/models/agent.dart';
+import '../../domain/models/chat_session.dart';
+import '../../domain/models/message.dart';
 
 /// Репозиторий для работы с чатом.
 ///

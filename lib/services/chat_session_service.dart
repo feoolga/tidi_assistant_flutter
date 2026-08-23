@@ -5,7 +5,7 @@ import '../providers/chat_provider.dart';
 import '../providers/session_provider.dart';
 import '../providers/agent_provider.dart';
 import '../data/repositories/chat_repository.dart';
-import '../models/chat_session.dart';
+import '../domain/models/chat_session.dart';
 
 /// Сервис для управления сессией чата.
 ///

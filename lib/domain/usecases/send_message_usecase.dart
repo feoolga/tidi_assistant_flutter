@@ -1,7 +1,7 @@
 // lib/domain/usecases/send_message_usecase.dart
 
 import '../../data/repositories/chat_repository.dart';
-import '../../models/message.dart';
+import '../models/message.dart';
 
 // ============================================================
 // 1. ПАРАМЕТРЫ

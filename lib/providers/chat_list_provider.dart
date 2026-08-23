@@ -1,8 +1,8 @@
 // lib/providers/chat_list_provider.dart
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/chat_session.dart';
-import '../models/agent.dart';
+import '../domain/models/chat_session.dart';
+import '../domain/models/agent.dart';
 import '../data/repositories/chat_repository.dart';
 import 'chat_provider.dart';
 import 'agent_provider.dart';

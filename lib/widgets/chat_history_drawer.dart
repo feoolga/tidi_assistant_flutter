@@ -2,9 +2,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/chat_session.dart';
+import '../domain/models/chat_session.dart';
 import '../providers/chat_list_provider.dart';
-import '../models/agent.dart';
+import '../domain/models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../providers/chat_provider.dart';
 import '../theme/app_theme.dart';
@@ -103,9 +103,7 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
           ),
 
           // Список чатов
-          Expanded(
-            child: _buildChatList(chats, isLoading, error),
-          ),
+          Expanded(child: _buildChatList(chats, isLoading, error)),
         ],
       ),
     );
@@ -134,15 +132,15 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
 
   void _createNewChat(BuildContext context) async {
     Navigator.pop(context);
-    
+
     // 👇 ИСПОЛЬЗУЕМ СЕРВИС
     ref.read(chatSessionServiceProvider).startNewDialog();
-    
+
     // Обновляем список чатов
     await _refreshChats();
-    
+
     widget.onChatCreated?.call();
-    
+
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -174,11 +172,7 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.error_outline,
-                size: 48,
-                color: Colors.red,
-              ),
+              const Icon(Icons.error_outline, size: 48, color: Colors.red),
               const SizedBox(height: 16),
               Text(
                 'Ошибка загрузки чатов',
@@ -207,11 +201,7 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.chat_bubble_outline,
-                size: 48,
-                color: Colors.grey,
-              ),
+              Icon(Icons.chat_bubble_outline, size: 48, color: Colors.grey),
               SizedBox(height: 16),
               Text(
                 'Нет чатов',

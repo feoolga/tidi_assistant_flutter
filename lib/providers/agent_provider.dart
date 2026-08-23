@@ -1,7 +1,7 @@
 // lib/providers/agent_provider.dart
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/agent.dart';
+import '../domain/models/agent.dart';
 import '../data/repositories/chat_repository.dart';
 import '../data/datasources/remote/chat_api.dart';
 import '../core/network/http_client.dart';

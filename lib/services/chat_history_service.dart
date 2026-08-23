@@ -1,7 +1,7 @@
 // lib/services/chat_history_service.dart
 
-import '../models/chat_session.dart';
-import '../models/message.dart';
+import '../domain/models/chat_session.dart';
+import '../domain/models/message.dart';
 import '../data/repositories/chat_repository.dart';
 
 /// Сервис для работы с историей чатов и сообщениями.

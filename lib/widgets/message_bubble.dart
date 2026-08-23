@@ -1,6 +1,6 @@
 // lib/widgets/message_bubble.dart
 import 'package:flutter/material.dart';
-import '../models/message.dart';
+import '../domain/models/message.dart';
 import '../theme/app_theme.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -15,8 +15,9 @@ class MessageBubble extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 16.0),
       child: Row(
-        mainAxisAlignment:
-            isFromUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: isFromUser
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         children: [
           // Контейнер сообщения
           Container(
@@ -29,9 +30,10 @@ class MessageBubble extends StatelessWidget {
             ),
             decoration: BoxDecoration(
               // Цвет как в web-версии
-              color: isFromUser 
-                  ? AppTheme.primaryLight  // #F2FBFA - фон пользователя
-                  : Colors.white,          // Белый - фон AI
+              color: isFromUser
+                  ? AppTheme
+                        .primaryLight // #F2FBFA - фон пользователя
+                  : Colors.white, // Белый - фон AI
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(16.0),
                 topRight: const Radius.circular(16.0),
@@ -68,8 +70,8 @@ class MessageBubble extends StatelessWidget {
                 Text(
                   message.text,
                   style: TextStyle(
-                    color: isFromUser 
-                        ? AppTheme.textPrimary 
+                    color: isFromUser
+                        ? AppTheme.textPrimary
                         : AppTheme.textPrimary,
                     fontSize: 16,
                     height: 1.4,
@@ -80,7 +82,7 @@ class MessageBubble extends StatelessWidget {
                 Text(
                   _formatTime(message.timestamp),
                   style: TextStyle(
-                    color: isFromUser 
+                    color: isFromUser
                         ? AppTheme.textSecondary.withValues(alpha: 0.7)
                         : AppTheme.textSecondary.withValues(alpha: 0.5),
                     fontSize: 10,
