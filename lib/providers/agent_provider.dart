@@ -2,8 +2,6 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/agent.dart';
-import '../services/agent_service.dart';
-import '../services/service_factory.dart';
 import '../data/repositories/chat_repository.dart';
 import '../data/datasources/remote/chat_api.dart';
 import '../core/network/http_client.dart';
@@ -46,14 +44,4 @@ final agentByIdProvider = Provider.family<Agent?, String>((ref, id) {
     }
   }
   return null;
-});
-
-// ============================================================
-// 2. СТАРЫЕ ПРОВАЙДЕРЫ (ДЛЯ ОБРАТНОЙ СОВМЕСТИМОСТИ)
-// ============================================================
-
-/// СТАРЫЙ провайдер для сервиса агентов (скоро удалим)
-@Deprecated('Используйте chatRepositoryProvider вместо agentServiceProvider')
-final agentServiceProvider = Provider<AgentService>((ref) {
-  return ServiceFactory.getAgentService();
 });

@@ -6,7 +6,6 @@ import '../models/agent.dart';
 import '../domain/usecases/send_message_usecase.dart';
 import '../data/repositories/chat_repository.dart';
 import '../services/chat_history_service.dart';
-import '../services/service_factory.dart';
 import 'session_provider.dart';
 import 'chat_list_provider.dart';
 import 'agent_provider.dart';
@@ -56,14 +55,10 @@ class ChatState {
 // ============================================================
 
 class ChatNotifier extends StateNotifier<ChatState> {
-  // ---- Зависимости ----
   final ChatHistoryService _chatHistoryService;
   final SendMessageUseCase _sendMessageUseCase;
-
-  // ---- Callback для обновления сессии ----
   final void Function(String agentId, String sessionId)? onSessionChanged;
 
-  // ---- Конструктор ----
   ChatNotifier({
     required ChatHistoryService chatHistoryService,
     required SendMessageUseCase sendMessageUseCase,
@@ -73,10 +68,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
        super(ChatState.initial()) {
     _addWelcomeMessage();
   }
-
-  // ============================================================
-  // ПРИВАТНЫЕ МЕТОДЫ
-  // ============================================================
 
   void _addWelcomeMessage() {
     if (state.messages.isEmpty) {
@@ -114,11 +105,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     state = state.copyWith(messages: messages);
   }
 
-  // ============================================================
-  // ПУБЛИЧНЫЕ МЕТОДЫ
-  // ============================================================
-
-  /// Отправить сообщение.
   Future<void> sendMessage({
     required String text,
     String? agentId,
@@ -133,10 +119,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _setStreaming(true);
 
     try {
-      // ---- 1. Получаем текущие сообщения (историю) ----
       final currentMessages = state.messages;
 
-      // ---- 2. Строим параметры для UseCase ----
       final params = SendMessageParams(
         text: text,
         history: currentMessages,
@@ -144,10 +128,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
         sessionId: sessionId,
       );
 
-      // ---- 3. Выполняем UseCase ----
       final result = await _sendMessageUseCase.execute(params);
 
-      // ---- 4. Обновляем UI ----
       final aiMessage = Message.fromAI(
         text: result.text,
         agentId: result.agentId,
@@ -155,7 +137,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
       _addMessage(aiMessage);
 
-      // ---- 5. Сообщаем об изменении сессии ----
       if (result.agentId != null && result.sessionId != null) {
         final currentAgentId = agentId;
         final currentSessionId = sessionId;
@@ -180,7 +161,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  /// Загрузить чат из истории.
   Future<void> loadChat(String agentId, String chatId) async {
     print('📂 ChatNotifier: loadChat агент=$agentId, чат=$chatId');
 
@@ -202,7 +182,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  /// Создать новый пустой чат.
   Future<void> createNewChat() async {
     print('🆕 ChatNotifier: createNewChat');
 
@@ -212,7 +191,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     print('✅ ChatNotifier: новый чат создан');
   }
 
-  /// Очистить чат.
   void clearChat() {
     print('🗑️ ChatNotifier: clearChat');
     _setMessages([]);
@@ -220,7 +198,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _clearError();
   }
 
-  /// Очистить ошибку.
   void clearError() {
     _clearError();
   }
@@ -230,12 +207,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
 // 3. ПРОВАЙДЕРЫ
 // ============================================================
 
-/// Провайдер для сервиса истории (пока старый, скоро заменим)
+/// Провайдер для сервиса истории
 final chatHistoryServiceProvider = Provider<ChatHistoryService>((ref) {
-  return ServiceFactory.getChatHistoryService();
+  final repository = ref.read(chatRepositoryProvider);
+  return ChatHistoryService(repository: repository);
 });
 
-/// Провайдер для SendMessageUseCase (НОВЫЙ!)
+/// Провайдер для SendMessageUseCase
 final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
   final repository = ref.read(chatRepositoryProvider);
   return SendMessageUseCase(repository: repository);
