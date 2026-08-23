@@ -3,27 +3,24 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/message.dart';
 import '../models/agent.dart';
-import '../services/master_chat_service.dart';
+import '../domain/usecases/send_message_usecase.dart';
+import '../data/repositories/chat_repository.dart';
 import '../services/chat_history_service.dart';
 import '../services/service_factory.dart';
-import '../domain/usecases/send_message_usecase.dart';
 import 'session_provider.dart';
 import 'chat_list_provider.dart';
 import 'agent_provider.dart';
 
 // ============================================================
-// ЧАСТЬ 1: СОСТОЯНИЕ ЧАТА (только сообщения и статус)
+// 1. СОСТОЯНИЕ ЧАТА
 // ============================================================
 
 /// Состояние чата - только сообщения и статус загрузки.
-/// 
-/// Важно: здесь НЕТ agentId и sessionId!
-/// Они хранятся в отдельном провайдере - sessionProvider.
 class ChatState {
   final List<Message> messages;
   final bool isLoading;
   final String? error;
-  final bool isStreaming; // 👈 НОВОЕ: идет ли сейчас стрим
+  final bool isStreaming;
 
   const ChatState({
     this.messages = const [],
@@ -52,22 +49,17 @@ class ChatState {
 
   bool get hasMessages => messages.isNotEmpty;
   bool get hasError => error != null && error!.isNotEmpty;
-
-  @override
-  String toString() {
-    return 'ChatState(messages: ${messages.length}, isLoading: $isLoading, isStreaming: $isStreaming, error: $error)';
-  }
 }
 
 // ============================================================
-// ЧАСТЬ 2: NOTIFIER (управляет только сообщениями)
+// 2. NOTIFIER
 // ============================================================
 
 class ChatNotifier extends StateNotifier<ChatState> {
-  // ---- Сервисы ----
+  // ---- Зависимости ----
   final ChatHistoryService _chatHistoryService;
   final SendMessageUseCase _sendMessageUseCase;
-  
+
   // ---- Callback для обновления сессии ----
   final void Function(String agentId, String sessionId)? onSessionChanged;
 
@@ -76,9 +68,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     required ChatHistoryService chatHistoryService,
     required SendMessageUseCase sendMessageUseCase,
     this.onSessionChanged,
-  })  : _chatHistoryService = chatHistoryService,
-        _sendMessageUseCase = sendMessageUseCase,
-        super(ChatState.initial()) {
+  }) : _chatHistoryService = chatHistoryService,
+       _sendMessageUseCase = sendMessageUseCase,
+       super(ChatState.initial()) {
     _addWelcomeMessage();
   }
 
@@ -115,9 +107,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   void _addMessage(Message message) {
-    state = state.copyWith(
-      messages: [...state.messages, message],
-    );
+    state = state.copyWith(messages: [...state.messages, message]);
   }
 
   void _setMessages(List<Message> messages) {
@@ -129,9 +119,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
   // ============================================================
 
   /// Отправить сообщение.
-  /// 
-  /// [agentId] - ID агента (если есть)
-  /// [sessionId] - ID сессии (если есть)
   Future<void> sendMessage({
     required String text,
     String? agentId,
@@ -168,32 +155,22 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
       _addMessage(aiMessage);
 
-      // ---- 5. Сообщаем об изменении сессии (если она изменилась) ----
+      // ---- 5. Сообщаем об изменении сессии ----
       if (result.agentId != null && result.sessionId != null) {
-        // Проверяем, изменилась ли сессия
         final currentAgentId = agentId;
         final currentSessionId = sessionId;
-        
-        if (currentAgentId != result.agentId || 
+
+        if (currentAgentId != result.agentId ||
             currentSessionId != result.sessionId) {
           print('🔄 ChatNotifier: сессия изменилась!');
           print('   Было: агент=$currentAgentId, чат=$currentSessionId');
           print('   Стало: агент=${result.agentId}, чат=${result.sessionId}');
-          
-          // Вызываем callback, чтобы обновить sessionProvider
+
           onSessionChanged?.call(result.agentId!, result.sessionId!);
         }
       }
 
-      // ---- 6. Если создан новый чат - обновляем список ----
-      if (result.chatCreated) {
-        print('✅ ChatNotifier: новый чат создан, обновляем список...');
-        // TODO: обновить список чатов через callback
-        // Пока просто логируем
-      }
-
       print('✅ ChatNotifier: сообщение отправлено успешно');
-      
     } catch (e) {
       print('❌ ChatNotifier: ошибка в sendMessage: $e');
       _setError(e.toString());
@@ -213,10 +190,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       final messages = await _chatHistoryService.getMessages(agentId, chatId);
       _setMessages(messages);
-      
-      // Сообщаем об изменении сессии
+
       onSessionChanged?.call(agentId, chatId);
-      
+
       print('✅ ChatNotifier: загружено ${messages.length} сообщений');
     } catch (e) {
       print('❌ ChatNotifier: ошибка в loadChat: $e');
@@ -233,9 +209,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _setMessages([]);
     _addWelcomeMessage();
     _clearError();
-    
-    // Сообщаем, что сессия сброшена
-    // onSessionChanged?.call(null, null); // 👈 пока не используем
     print('✅ ChatNotifier: новый чат создан');
   }
 
@@ -254,32 +227,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
 }
 
 // ============================================================
-// ЧАСТЬ 3: ПРОВАЙДЕРЫ
+// 3. ПРОВАЙДЕРЫ
 // ============================================================
 
-/// Провайдер для сервиса чата
-final chatServiceProvider = Provider<MasterChatService>((ref) {
-  return ServiceFactory.getChatService();
-});
-
-/// Провайдер для сервиса истории
+/// Провайдер для сервиса истории (пока старый, скоро заменим)
 final chatHistoryServiceProvider = Provider<ChatHistoryService>((ref) {
   return ServiceFactory.getChatHistoryService();
 });
 
-/// Провайдер для SendMessageUseCase
+/// Провайдер для SendMessageUseCase (НОВЫЙ!)
 final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
-  final chatService = ref.read(chatServiceProvider);
-  final chatHistoryService = ref.read(chatHistoryServiceProvider);
-  return SendMessageUseCase(
-    chatService: chatService,
-    chatHistoryService: chatHistoryService,
-  );
+  final repository = ref.read(chatRepositoryProvider);
+  return SendMessageUseCase(repository: repository);
 });
 
 /// Основной провайдер чата.
-/// 
-/// Теперь он принимает callback для обновления сессии.
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
   final chatHistoryService = ref.read(chatHistoryServiceProvider);
   final sendMessageUseCase = ref.read(sendMessageUseCaseProvider);
@@ -288,7 +250,6 @@ final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
     chatHistoryService: chatHistoryService,
     sendMessageUseCase: sendMessageUseCase,
     onSessionChanged: (agentId, sessionId) {
-      // 👈 Обновляем sessionProvider через callback
       ref.read(sessionProvider.notifier).setSession(agentId, sessionId);
     },
   );
