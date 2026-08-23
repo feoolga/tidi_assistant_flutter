@@ -3,23 +3,24 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
 import '../models/agent.dart';
-import '../services/chat_history_service.dart';  // 👈 ДОБАВЛЯЕМ
-import 'chat_provider.dart';  // 👈 ДЛЯ chatHistoryServiceProvider
+import '../data/repositories/chat_repository.dart';
+import 'chat_provider.dart';
+import 'agent_provider.dart';
 
 // ============================================================
-// ЧАСТЬ 1: СОСТОЯНИЕ СПИСКА ЧАТОВ
+// 1. СОСТОЯНИЕ СПИСКА ЧАТОВ
 // ============================================================
 
 class ChatListState {
   /// Список чатов
   final List<ChatSession> chats;
-  
+
   /// Флаг загрузки
   final bool isLoading;
-  
+
   /// Ошибка (если есть)
   final String? error;
-  
+
   /// Версия данных (увеличивается при каждом обновлении)
   final int version;
 
@@ -53,19 +54,20 @@ class ChatListState {
 }
 
 // ============================================================
-// ЧАСТЬ 2: NOTIFIER ДЛЯ УПРАВЛЕНИЯ СПИСКОМ ЧАТОВ
+// 2. NOTIFIER
 // ============================================================
 
 class ChatListNotifier extends StateNotifier<ChatListState> {
-  final ChatHistoryService _chatHistoryService;
-  
+  // ---- Зависимости ----
+  final ChatRepository _repository;
+
   /// Кэш агентов (чтобы не запрашивать каждый раз)
   List<Agent>? _cachedAgents;
 
-  ChatListNotifier({
-    required ChatHistoryService chatHistoryService,
-  }) : _chatHistoryService = chatHistoryService,
-       super(ChatListState.initial());
+  // ---- Конструктор ----
+  ChatListNotifier({required ChatRepository repository})
+    : _repository = repository,
+      super(ChatListState.initial());
 
   // ============================================================
   // ПРИВАТНЫЕ МЕТОДЫ
@@ -84,10 +86,7 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
   }
 
   void _setChats(List<ChatSession> chats) {
-    state = state.copyWith(
-      chats: chats,
-      version: state.version + 1,
-    );
+    state = state.copyWith(chats: chats, version: state.version + 1);
   }
 
   // ============================================================
@@ -101,23 +100,27 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
       return;
     }
 
-    print('📦 ChatListNotifier: загружаем чаты для ${agents.length} агентов...');
-    
+    print(
+      '📦 ChatListNotifier: загружаем чаты для ${agents.length} агентов...',
+    );
+
     _setLoading(true);
     _clearError();
 
     try {
       List<ChatSession> allChats = [];
 
+      // Проходим по всем агентам и загружаем их чаты
       for (final agent in agents) {
         try {
-          final chats = await _chatHistoryService.getChats(agent.id);
+          final chats = await _repository.getConversations(agentId: agent.id);
           allChats.addAll(chats);
         } catch (e) {
           print('⚠️ Не удалось загрузить чаты для агента ${agent.id}: $e');
         }
       }
 
+      // Сортируем по дате обновления (новые первые)
       allChats.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
       _setChats(allChats);
@@ -133,9 +136,9 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
   /// Принудительно обновить список чатов
   Future<void> refresh({List<Agent>? agents}) async {
     print('🔄 ChatListNotifier: принудительное обновление...');
-    
+
     List<Agent>? agentsToUse = agents ?? _cachedAgents;
-    
+
     if (agentsToUse == null || agentsToUse.isEmpty) {
       print('⚠️ ChatListNotifier: нет агентов для загрузки');
       return;
@@ -160,16 +163,15 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
 }
 
 // ============================================================
-// ЧАСТЬ 3: ПРОВАЙДЕРЫ
+// 3. ПРОВАЙДЕРЫ
 // ============================================================
 
-/// 👇 ИСПОЛЬЗУЕМ ПРОВАЙДЕР ИЗ chat_provider.dart
-final chatListNotifierProvider = StateNotifierProvider<ChatListNotifier, ChatListState>((ref) {
-  final chatHistoryService = ref.read(chatHistoryServiceProvider);
-  return ChatListNotifier(
-    chatHistoryService: chatHistoryService,
-  );
-});
+/// Провайдер для списка чатов (НОВЫЙ, через Repository)
+final chatListNotifierProvider =
+    StateNotifierProvider<ChatListNotifier, ChatListState>((ref) {
+      final repository = ref.read(chatRepositoryProvider);
+      return ChatListNotifier(repository: repository);
+    });
 
 /// Провайдер для получения списка всех чатов
 final allChatsProvider = Provider<List<ChatSession>>((ref) {
