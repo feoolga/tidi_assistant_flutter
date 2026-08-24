@@ -7,7 +7,6 @@ import '../providers/session_provider.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/chat_history_drawer.dart';
-import '../services/chat_session_service.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -53,7 +52,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// Получить имя агента для отображения в AppBar
   String _getAgentName(String? agentId) {
     if (agentId == null) return 'AI Ассистент';
-    
+
     final agentNames = {
       'chat': 'Чат-агент',
       'epoz': 'ЕПоЗ',
@@ -70,22 +69,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _sendMessage(String text) {
     // Берем сессию из провайдера
     final sessionState = ref.read(sessionProvider);
-    
+
     // Отправляем сообщение
-    ref.read(chatProvider.notifier).sendMessage(
-      text: text,
-      agentId: sessionState.agentId,
-      sessionId: sessionState.sessionId,
-    );
-    
+    ref
+        .read(chatProvider.notifier)
+        .sendMessage(
+          text: text,
+          agentId: sessionState.agentId,
+          sessionId: sessionState.sessionId,
+        );
+
     Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }
 
   void _loadChat(String agentId, String chatId) {
     print('📂 Загружаем чат: agentId=$agentId, chatId=$chatId');
-    
+
     // 👇 ИСПОЛЬЗУЕМ СЕРВИС
-    ref.read(chatSessionServiceProvider).loadChat(agentId, chatId);
+    ref.read(chatProvider.notifier).loadChat(agentId, chatId);
   }
 
   void _clearChat() {
@@ -94,8 +95,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   void _startNewChat() {
     // 👇 ИСПОЛЬЗУЕМ СЕРВИС
-    ref.read(chatSessionServiceProvider).startNewDialog();
-    
+    ref.read(chatProvider.notifier).createNewChat();
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('🔄 Новый чат создан'),
@@ -110,15 +111,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 👇 ПОДПИСЫВАЕМСЯ НА СОСТОЯНИЕ ЧАТА (только сообщения)
+    // 👇 ПОДПИСЫВАЕМСЯ НА СОСТОЯНИЕ ЧАТА
     final chatState = ref.watch(chatProvider);
     final messages = chatState.messages;
     final isLoading = chatState.isLoading;
     final error = chatState.error;
+    final currentAgentId = chatState.currentAgentId; // ✅ ПРАВИЛЬНО
 
-    // 👇 ПОЛУЧАЕМ СЕССИЮ ИЗ ОТДЕЛЬНОГО ПРОВАЙДЕРА
+    // 👇 ПОЛУЧАЕМ СЕССИЮ (для отправки сообщений)
     final sessionState = ref.watch(sessionProvider);
-    final currentAgentId = sessionState.agentId;
 
     // Если есть ошибка — показываем SnackBar
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -157,18 +158,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           children: [
             Text(
               _getAgentName(currentAgentId),
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             if (currentAgentId != null)
               Text(
                 'Агент: $currentAgentId',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                ),
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
           ],
         ),
@@ -187,9 +182,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           // ============================================================
           Expanded(
             child: messages.isEmpty && isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(),
-                  )
+                ? const Center(child: CircularProgressIndicator())
                 : ListView.builder(
                     controller: _scrollController,
                     reverse: true,
@@ -226,10 +219,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           // ============================================================
           // ПОЛЕ ВВОДА СООБЩЕНИЯ
           // ============================================================
-          MessageInput(
-            onSend: _sendMessage,
-            isLoading: isLoading,
-          ),
+          MessageInput(onSend: _sendMessage, isLoading: isLoading),
         ],
       ),
     );

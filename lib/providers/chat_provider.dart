@@ -17,12 +17,16 @@ class ChatState {
   final bool isLoading;
   final String? error;
   final bool isStreaming;
+  final String? currentAgentId;
+  final String? currentConversationId;
 
   const ChatState({
     this.messages = const [],
     this.isLoading = false,
     this.error,
     this.isStreaming = false,
+    this.currentAgentId,
+    this.currentConversationId,
   });
 
   factory ChatState.initial() {
@@ -34,12 +38,17 @@ class ChatState {
     bool? isLoading,
     String? error,
     bool? isStreaming,
+    String? currentAgentId,
+    String? currentConversationId,
   }) {
     return ChatState(
       messages: messages ?? this.messages,
       isLoading: isLoading ?? this.isLoading,
       error: error ?? this.error,
       isStreaming: isStreaming ?? this.isStreaming,
+      currentAgentId: currentAgentId ?? this.currentAgentId,
+      currentConversationId:
+          currentConversationId ?? this.currentConversationId,
     );
   }
 
@@ -80,6 +89,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   void _setLoading(bool isLoading) {
     state = state.copyWith(isLoading: isLoading);
+  }
+
+  void _setCurrentAgent(String? agentId) {
+    state = state.copyWith(currentAgentId: agentId);
+  }
+
+  void _setCurrentConversationId(String? conversationId) {
+    state = state.copyWith(currentConversationId: conversationId);
   }
 
   void _setStreaming(bool isStreaming) {
@@ -126,6 +143,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
 
       final result = await _sendMessageUseCase.execute(params);
+
+      // Сразу после этого добавь:
+      if (result.agentId != null) {
+        _setCurrentAgent(result.agentId);
+        print('🔵 ChatNotifier: агент определён: ${result.agentId}');
+      }
 
       final aiMessage = Message.fromAI(
         text: result.text,
@@ -188,6 +211,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _setMessages([]);
     _addWelcomeMessage();
     _clearError();
+    _setCurrentAgent(null);
+    _setCurrentConversationId(null);
+
     print('✅ ChatNotifier: новый чат создан');
   }
 
@@ -196,6 +222,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _setMessages([]);
     _addWelcomeMessage();
     _clearError();
+    _setCurrentConversationId(null);
   }
 
   void clearError() {

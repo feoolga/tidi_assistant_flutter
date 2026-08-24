@@ -7,7 +7,7 @@ import '../providers/chat_list_provider.dart';
 import '../domain/models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../theme/app_theme.dart';
-import '../services/chat_session_service.dart';
+import '../providers/chat_provider.dart';
 
 // 👇 МЕНЯЕМ НА ConsumerStatefulWidget
 class ChatHistoryDrawer extends ConsumerStatefulWidget {
@@ -131,9 +131,6 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
 
   void _createNewChat(BuildContext context) async {
     Navigator.pop(context);
-
-    // 👇 ИСПОЛЬЗУЕМ СЕРВИС
-    ref.read(chatSessionServiceProvider).startNewDialog();
 
     // Обновляем список чатов
     await _refreshChats();
