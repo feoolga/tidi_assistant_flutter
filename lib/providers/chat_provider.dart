@@ -3,9 +3,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/models/message.dart';
 import '../domain/usecases/send_message_usecase.dart';
-import '../services/chat_history_service.dart';
 import 'session_provider.dart';
 import 'agent_provider.dart';
+import '../data/repositories/chat_repository.dart';
 
 // ============================================================
 // 1. СОСТОЯНИЕ ЧАТА
@@ -52,15 +52,15 @@ class ChatState {
 // ============================================================
 
 class ChatNotifier extends StateNotifier<ChatState> {
-  final ChatHistoryService _chatHistoryService;
+  final ChatRepository _repository;
   final SendMessageUseCase _sendMessageUseCase;
   final void Function(String agentId, String sessionId)? onSessionChanged;
 
   ChatNotifier({
-    required ChatHistoryService chatHistoryService,
+    required ChatRepository repository,
     required SendMessageUseCase sendMessageUseCase,
     this.onSessionChanged,
-  }) : _chatHistoryService = chatHistoryService,
+  }) : _repository = repository,
        _sendMessageUseCase = sendMessageUseCase,
        super(ChatState.initial()) {
     _addWelcomeMessage();
@@ -165,7 +165,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _clearError();
 
     try {
-      final messages = await _chatHistoryService.getMessages(agentId, chatId);
+      final messages = await _repository.getMessages(
+        agentId: agentId,
+        conversationId: chatId,
+      );
       _setMessages(messages);
 
       onSessionChanged?.call(agentId, chatId);
@@ -204,12 +207,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
 // 3. ПРОВАЙДЕРЫ
 // ============================================================
 
-/// Провайдер для сервиса истории
-final chatHistoryServiceProvider = Provider<ChatHistoryService>((ref) {
-  final repository = ref.read(chatRepositoryProvider);
-  return ChatHistoryService(repository: repository);
-});
-
 /// Провайдер для SendMessageUseCase
 final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
   final repository = ref.read(chatRepositoryProvider);
@@ -218,11 +215,11 @@ final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
 
 /// Основной провайдер чата.
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
-  final chatHistoryService = ref.read(chatHistoryServiceProvider);
+  final repository = ref.read(chatRepositoryProvider);
   final sendMessageUseCase = ref.read(sendMessageUseCaseProvider);
 
   return ChatNotifier(
-    chatHistoryService: chatHistoryService,
+    repository: repository,
     sendMessageUseCase: sendMessageUseCase,
     onSessionChanged: (agentId, sessionId) {
       ref.read(sessionProvider.notifier).setSession(agentId, sessionId);
