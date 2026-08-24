@@ -2,12 +2,9 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/models/message.dart';
-import '../domain/models/agent.dart';
 import '../domain/usecases/send_message_usecase.dart';
-import '../data/repositories/chat_repository.dart';
 import '../services/chat_history_service.dart';
 import 'session_provider.dart';
-import 'chat_list_provider.dart';
 import 'agent_provider.dart';
 
 // ============================================================

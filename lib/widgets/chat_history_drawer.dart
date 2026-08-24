@@ -6,7 +6,6 @@ import '../domain/models/chat_session.dart';
 import '../providers/chat_list_provider.dart';
 import '../domain/models/agent.dart';
 import '../providers/agent_provider.dart';
-import '../providers/chat_provider.dart';
 import '../theme/app_theme.dart';
 import '../services/chat_session_service.dart';
 
