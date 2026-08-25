@@ -1,6 +1,7 @@
 // lib/providers/session_provider.dart
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/logger/app_logger.dart';
 
 /// Состояние текущей сессии чата
 ///
@@ -10,19 +11,13 @@ class ChatSessionState {
   final String? agentId;
   final String? sessionId; // conversation_id
 
-  const ChatSessionState({
-    this.agentId,
-    this.sessionId,
-  });
+  const ChatSessionState({this.agentId, this.sessionId});
 
   /// Есть ли активная сессия
   bool get hasSession => agentId != null && sessionId != null;
 
   /// Создать копию с измененными полями
-  ChatSessionState copyWith({
-    String? agentId,
-    String? sessionId,
-  }) {
+  ChatSessionState copyWith({String? agentId, String? sessionId}) {
     return ChatSessionState(
       agentId: agentId ?? this.agentId,
       sessionId: sessionId ?? this.sessionId,
@@ -30,13 +25,15 @@ class ChatSessionState {
   }
 
   @override
-  String toString() => 'ChatSessionState(agentId: $agentId, sessionId: $sessionId)';
+  String toString() =>
+      'ChatSessionState(agentId: $agentId, sessionId: $sessionId)';
 }
 
 /// Провайдер для управления текущей сессией чата
-final sessionProvider = StateNotifierProvider<SessionNotifier, ChatSessionState>((ref) {
-  return SessionNotifier();
-});
+final sessionProvider =
+    StateNotifierProvider<SessionNotifier, ChatSessionState>((ref) {
+      return SessionNotifier();
+    });
 
 class SessionNotifier extends StateNotifier<ChatSessionState> {
   SessionNotifier() : super(const ChatSessionState());
@@ -48,26 +45,23 @@ class SessionNotifier extends StateNotifier<ChatSessionState> {
   void setSession(String agentId, String sessionId) {
     // Проверяем, изменилось ли что-то
     if (state.agentId == agentId && state.sessionId == sessionId) {
-      print('🔄 Сессия уже установлена: агент=$agentId, conversation=$sessionId');
+      AppLogger.debug('Сессия уже установлена: агент=$agentId, чат=$sessionId');
       return;
     }
 
-    state = state.copyWith(
-      agentId: agentId,
-      sessionId: sessionId,
-    );
-    print('✅ Сессия установлена: агент=$agentId, conversation=$sessionId');
+    state = state.copyWith(agentId: agentId, sessionId: sessionId);
+    AppLogger.info('Сессия установлена: агент=$agentId, чат=$sessionId');
   }
 
   /// Очистить сессию (начать новый диалог)
   void clearSession() {
     if (state.agentId == null && state.sessionId == null) {
-      print('🔄 Сессия уже пуста');
+      AppLogger.debug('Сессия уже пуста');
       return;
     }
 
     state = const ChatSessionState();
-    print('🗑️ Сессия очищена');
+    AppLogger.info('Сессия очищена');
   }
 
   /// Обновить только ID агента
@@ -79,7 +73,7 @@ class SessionNotifier extends StateNotifier<ChatSessionState> {
     }
 
     state = state.copyWith(agentId: agentId);
-    print('🔄 Агент обновлен: $agentId');
+    AppLogger.debug('Агент обновлён: $agentId');
   }
 
   /// Обновить только ID сессии
@@ -91,7 +85,7 @@ class SessionNotifier extends StateNotifier<ChatSessionState> {
     }
 
     state = state.copyWith(sessionId: sessionId);
-    print('🔄 Session обновлен: $sessionId');
+    AppLogger.debug('Сессия обновлена: $sessionId');
   }
 
   /// Проверить, совпадает ли переданная сессия с текущей

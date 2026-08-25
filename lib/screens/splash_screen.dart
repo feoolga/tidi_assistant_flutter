@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/logger/app_logger.dart';
 import '../theme/app_theme.dart';
 import '../providers/agent_provider.dart';
 import 'chat_screen.dart';
@@ -54,12 +55,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
   void _loadAgentsAndNavigate() async {
     try {
-      // 👇 ДОБАВЛЯЕМ ТАЙМАУТ: если сервер не отвечает 5 секунд — переходим дальше
+      // Таймаут: если сервер не отвечает 5 секунд — переходим дальше
       final agents = await ref
           .read(agentsProvider.future)
           .timeout(const Duration(seconds: 5));
 
-      print('✅ Загружено агентов: ${agents.length}');
+      AppLogger.info('Загружено агентов: ${agents.length}');
 
       // Небольшая задержка для анимации
       await Future.delayed(const Duration(milliseconds: 1500));
@@ -71,9 +72,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         );
       }
     } catch (e) {
-      // 👇 ЕСЛИ ОШИБКА — ПОКАЗЫВАЕМ, НО ВСЁ РАВНО ПЕРЕХОДИМ В ЧАТ
-      print('⚠️ Ошибка загрузки агентов: $e');
-      
+      // Если ошибка — показываем, но всё равно переходим в чат
+      AppLogger.warning('Ошибка загрузки агентов: $e');
+
       setState(() {
         _errorMessage = 'Не удалось загрузить агентов: $e';
       });
@@ -152,10 +153,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                     ),
                   ),
                   const SizedBox(height: 48),
-                  // 👇 ПОКАЗЫВАЕМ ОШИБКУ, ЕСЛИ ОНА ЕСТЬ
+                  // Показываем ошибку, если она есть
                   if (_errorMessage != null) ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.red.shade50,
                         borderRadius: BorderRadius.circular(12),
@@ -163,11 +167,18 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                       ),
                       child: Column(
                         children: [
-                          const Icon(Icons.error_outline, color: Colors.red, size: 24),
+                          const Icon(
+                            Icons.error_outline,
+                            color: Colors.red,
+                            size: 24,
+                          ),
                           const SizedBox(height: 8),
                           Text(
                             _errorMessage!,
-                            style: const TextStyle(color: Colors.red, fontSize: 14),
+                            style: const TextStyle(
+                              color: Colors.red,
+                              fontSize: 14,
+                            ),
                             textAlign: TextAlign.center,
                           ),
                         ],

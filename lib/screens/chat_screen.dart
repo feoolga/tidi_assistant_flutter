@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/logger/app_logger.dart';
 import '../providers/chat_provider.dart';
 import '../providers/session_provider.dart';
 import '../widgets/message_bubble.dart';
@@ -83,9 +84,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   void _loadChat(String agentId, String chatId) {
-    print('📂 Загружаем чат: agentId=$agentId, chatId=$chatId');
-
-    // 👇 ИСПОЛЬЗУЕМ СЕРВИС
+    AppLogger.info('Загружаем чат: агент=$agentId, чат=$chatId');
     ref.read(chatProvider.notifier).loadChat(agentId, chatId);
   }
 
@@ -94,7 +93,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   void _startNewChat() {
-    // 👇 ИСПОЛЬЗУЕМ СЕРВИС
     ref.read(chatProvider.notifier).createNewChat();
   }
 
@@ -104,15 +102,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 👇 ПОДПИСЫВАЕМСЯ НА СОСТОЯНИЕ ЧАТА
+    // Подписываемся на состояние чата
     final chatState = ref.watch(chatProvider);
     final messages = chatState.messages;
     final isLoading = chatState.isLoading;
     final error = chatState.error;
-    final currentAgentId = chatState.currentAgentId; // ✅ ПРАВИЛЬНО
-
-    // 👇 ПОЛУЧАЕМ СЕССИЮ (для отправки сообщений)
-    final sessionState = ref.watch(sessionProvider);
+    final currentAgentId = chatState.currentAgentId;
 
     // Если есть ошибка — показываем SnackBar
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -131,7 +126,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return Scaffold(
       drawer: ChatHistoryDrawer(
         onChatSelected: (agentId, chatId) {
-          print('📂 Выбран чат: agentId=$agentId, chatId=$chatId');
+          AppLogger.info('Выбран чат: агент=$agentId, чат=$chatId');
           _loadChat(agentId, chatId);
         },
         onChatCreated: _startNewChat,

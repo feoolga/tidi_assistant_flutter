@@ -4,71 +4,70 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
+import '../logger/app_logger.dart';
 
 /// Единый HTTP клиент для всех запросов к API.
-/// 
+///
 /// Все сервисы используют этот клиент вместо прямых вызовов http.
 /// Это позволяет:
 /// 1. Не дублировать заголовки и URL в каждом сервисе
-/// 2. Легко добавить логирование всех запросов
-/// 3. Централизованно обрабатывать ошибки
+/// 2. Централизованно логировать все запросы
+/// 3. Единообразно обрабатывать ошибки
 /// 4. Легко заменить реализацию (например, на dio)
 class AppHttpClient {
   // ============================================================
   // 1. ВНУТРЕННИЙ КЛИЕНТ
   // ============================================================
-  
+
   /// Внутренний HTTP клиент.
-  /// 
-  /// Используем один экземпляр на всё приложение.
-  /// Это позволяет переиспользовать соединения (keep-alive).
+  ///
+  /// Используем один экземпляр на всё приложение —
+  /// это позволяет переиспользовать соединения (keep-alive).
   final http.Client _client;
-  
+
   // ============================================================
   // 2. КОНСТРУКТОР
   // ============================================================
-  
+
   /// Создает клиент с настройками из AppConfig.
-  AppHttpClient()
-      : _client = http.Client();
-  
+  AppHttpClient() : _client = http.Client();
+
   // ============================================================
   // 3. ОСНОВНЫЕ МЕТОДЫ
   // ============================================================
-  
+
   /// GET-запрос.
-  /// 
+  ///
   /// Пример использования:
   /// ```dart
   /// final response = await client.get('/v1/models');
   /// ```
-  Future<http.Response> get(
-    String path, {
-    Map<String, String>? headers,
-  }) async {
+  Future<http.Response> get(String path, {Map<String, String>? headers}) async {
     final uri = _buildUri(path);
     final allHeaders = _mergeHeaders(headers);
-    
-    print('🌐 GET $uri');
-    
+
+    AppLogger.info('GET $uri');
+
     try {
       final response = await _client
           .get(uri, headers: allHeaders)
           .timeout(AppConfig.timeout);
-      
-      print('✅ GET ${response.statusCode}');
+
+      AppLogger.debug('GET ${response.statusCode}');
       _logResponse(response);
-      
+
       return response;
     } on TimeoutException {
+      AppLogger.error('Таймаут при выполнении GET-запроса: $path');
       throw Exception('Превышено время ожидания ответа от сервера');
     } catch (e) {
+      AppLogger.error('Ошибка при выполнении GET-запроса: $path', e);
       throw Exception('Ошибка при выполнении GET-запроса: $e');
     }
   }
-  
+
   /// POST-запрос с JSON-телом.
-  /// 
+  ///
   /// Пример использования:
   /// ```dart
   /// final body = {'model': 'auto', 'messages': [...]};
@@ -82,37 +81,35 @@ class AppHttpClient {
     final uri = _buildUri(path);
     final allHeaders = _mergeHeaders(headers);
     final jsonBody = body != null ? jsonEncode(body) : null;
-    
-    print('🌐 POST $uri');
+
+    AppLogger.info('POST $uri');
     if (body != null) {
-      print('📦 Тело: ${jsonBody?.length ?? 0} символов');
+      AppLogger.debug('Тело запроса: ${jsonBody?.length ?? 0} символов');
     }
-    
+
     try {
       final response = await _client
-          .post(
-            uri,
-            headers: allHeaders,
-            body: jsonBody,
-          )
+          .post(uri, headers: allHeaders, body: jsonBody)
           .timeout(AppConfig.timeout);
-      
-      print('✅ POST ${response.statusCode}');
+
+      AppLogger.debug('POST ${response.statusCode}');
       _logResponse(response);
-      
+
       return response;
     } on TimeoutException {
+      AppLogger.error('Таймаут при выполнении POST-запроса: $path');
       throw Exception('Превышено время ожидания ответа от сервера');
     } catch (e) {
+      AppLogger.error('Ошибка при выполнении POST-запроса: $path', e);
       throw Exception('Ошибка при выполнении POST-запроса: $e');
     }
   }
-  
+
   /// POST-запрос со стрим-ответом (для SSE).
-  /// 
+  ///
   /// Отличается от обычного POST тем, что возвращает StreamedResponse.
   /// Это позволяет читать ответ по частям (токен за токеном).
-  /// 
+  ///
   /// Пример использования:
   /// ```dart
   /// final body = {'model': 'auto', 'messages': [...]};
@@ -126,24 +123,26 @@ class AppHttpClient {
     final uri = _buildUri(path);
     final allHeaders = _mergeHeaders(headers, isStream: true);
     final jsonBody = body != null ? jsonEncode(body) : null;
-    
-    print('🌐 POST (stream) $uri');
-    
+
+    AppLogger.info('POST (stream) $uri');
+
     try {
       final request = http.Request('POST', uri)
         ..headers.addAll(allHeaders)
         ..body = jsonBody ?? '';
-      
+
       final response = await _client
           .send(request)
           .timeout(AppConfig.streamTimeout);
-      
-      print('✅ POST (stream) ${response.statusCode}');
-      
+
+      AppLogger.debug('POST (stream) ${response.statusCode}');
+
       return response;
     } on TimeoutException {
+      AppLogger.error('Таймаут при выполнении POST-запроса (stream): $path');
       throw Exception('Превышено время ожидания ответа от сервера');
     } catch (e) {
+      AppLogger.error('Ошибка при выполнении POST-запроса (stream): $path', e);
       throw Exception('Ошибка при выполнении POST-запроса (stream): $e');
     }
   }
@@ -157,25 +156,23 @@ class AppHttpClient {
     final uri = _buildUri(path);
     final allHeaders = _mergeHeaders(headers);
     final jsonBody = body != null ? jsonEncode(body) : null;
-    
-    print('🌐 PATCH $uri');
-    
+
+    AppLogger.info('PATCH $uri');
+
     try {
       final response = await _client
-          .patch(
-            uri,
-            headers: allHeaders,
-            body: jsonBody,
-          )
+          .patch(uri, headers: allHeaders, body: jsonBody)
           .timeout(AppConfig.timeout);
-      
-      print('✅ PATCH ${response.statusCode}');
+
+      AppLogger.debug('PATCH ${response.statusCode}');
       _logResponse(response);
-      
+
       return response;
     } on TimeoutException {
+      AppLogger.error('Таймаут при выполнении PATCH-запроса: $path');
       throw Exception('Превышено время ожидания ответа от сервера');
     } catch (e) {
+      AppLogger.error('Ошибка при выполнении PATCH-запроса: $path', e);
       throw Exception('Ошибка при выполнении PATCH-запроса: $e');
     }
   }
@@ -187,41 +184,43 @@ class AppHttpClient {
   }) async {
     final uri = _buildUri(path);
     final allHeaders = _mergeHeaders(headers);
-    
-    print('🌐 DELETE $uri');
-    
+
+    AppLogger.info('DELETE $uri');
+
     try {
       final response = await _client
           .delete(uri, headers: allHeaders)
           .timeout(AppConfig.timeout);
-      
-      print('✅ DELETE ${response.statusCode}');
+
+      AppLogger.debug('DELETE ${response.statusCode}');
       _logResponse(response);
-      
+
       return response;
     } on TimeoutException {
+      AppLogger.error('Таймаут при выполнении DELETE-запроса: $path');
       throw Exception('Превышено время ожидания ответа от сервера');
     } catch (e) {
+      AppLogger.error('Ошибка при выполнении DELETE-запроса: $path', e);
       throw Exception('Ошибка при выполнении DELETE-запроса: $e');
     }
   }
-  
+
   // ============================================================
   // 4. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
   // ============================================================
-  
+
   /// Строит полный URI из базового URL и пути.
   Uri _buildUri(String path) {
     // Убираем лишние слэши
     final base = AppConfig.baseUrl.endsWith('/')
         ? AppConfig.baseUrl.substring(0, AppConfig.baseUrl.length - 1)
         : AppConfig.baseUrl;
-    
+
     final cleanPath = path.startsWith('/') ? path : '/$path';
-    
+
     return Uri.parse('$base$cleanPath');
   }
-  
+
   /// Объединяет заголовки по умолчанию с переданными.
   Map<String, String> _mergeHeaders(
     Map<String, String>? customHeaders, {
@@ -231,36 +230,40 @@ class AppHttpClient {
     final defaultHeaders = isStream
         ? AppConfig.streamHeaders
         : AppConfig.defaultHeaders;
-    
+
     // Добавляем X-User-Id
     final headers = Map<String, String>.from(defaultHeaders)
       ..['X-User-Id'] = AppConfig.userId;
-    
+
     // Добавляем кастомные заголовки (они переопределяют дефолтные)
     if (customHeaders != null) {
       headers.addAll(customHeaders);
     }
-    
+
     return headers;
   }
-  
-  /// Логирует ответ (только для отладки).
+
+  /// Логирует ответ, если он содержит ошибку.
   void _logResponse(http.Response response) {
     if (response.statusCode >= 400) {
-      print('❌ Ошибка: ${response.statusCode}');
-      print('📄 Тело: ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}...');
+      // Обрезаем длинное тело ответа для читаемости
+      final body = response.body.length > 200
+          ? '${response.body.substring(0, 200)}...'
+          : response.body;
+      AppLogger.warning('HTTP ${response.statusCode}: $body');
     }
   }
-  
+
   // ============================================================
   // 5. ЗАКРЫТИЕ КЛИЕНТА
   // ============================================================
-  
+
   /// Закрывает HTTP клиент.
-  /// 
-  /// Нужно вызывать при завершении приложения.
-  /// Но обычно Flutter сам управляет жизненным циклом.
+  ///
+  /// Нужно вызывать при завершении приложения,
+  /// но обычно Flutter сам управляет жизненным циклом.
   void close() {
+    AppLogger.debug('Закрытие HTTP клиента');
     _client.close();
   }
 }

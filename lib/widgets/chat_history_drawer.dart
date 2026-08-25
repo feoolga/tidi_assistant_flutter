@@ -7,7 +7,6 @@ import '../providers/chat_list_provider.dart';
 import '../domain/models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../theme/app_theme.dart';
-import '../providers/chat_provider.dart';
 
 // 👇 МЕНЯЕМ НА ConsumerStatefulWidget
 class ChatHistoryDrawer extends ConsumerStatefulWidget {

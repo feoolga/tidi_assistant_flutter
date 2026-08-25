@@ -1,6 +1,7 @@
 // lib/domain/usecases/send_message_usecase.dart
 
 import '../../data/repositories/chat_repository.dart';
+import '../../core/logger/app_logger.dart';
 import '../models/message.dart';
 
 // ============================================================
@@ -95,8 +96,8 @@ class SendMessageUseCase {
 
   /// Выполнить сценарий: отправить сообщение.
   Future<SendMessageResult> execute(SendMessageParams params) async {
-    print('📤 UseCase: отправка сообщения "${params.text}"');
-    print('📤 История: ${params.history.length} сообщений');
+    AppLogger.info('Отправка сообщения: "${params.text}"');
+    AppLogger.debug('История: ${params.history.length} сообщений');
 
     // ---- 1. Формируем полную историю ----
     // Добавляем новое сообщение пользователя в конец
@@ -106,9 +107,6 @@ class SendMessageUseCase {
     ];
 
     // ---- 2. Отправляем через Repository ----
-    // ВНИМАНИЕ! sendMessage пока возвращает ошибку,
-    // потому что бэкенд еще не починен.
-    // Как только починят — этот код заработает.
     final response = await _repository.sendMessage(
       messages: fullHistory,
       conversationId: params.sessionId,
@@ -116,9 +114,8 @@ class SendMessageUseCase {
     );
 
     // ---- 3. Формируем результат ----
-    print('✅ UseCase: сообщение отправлено');
-    print(
-      '🔵 UseCase: агент=${response.model}, чат=${response.conversationId}',
+    AppLogger.info(
+      'Сообщение отправлено (агент=${response.model}, чат=${response.conversationId})',
     );
 
     return SendMessageResult(
@@ -126,7 +123,7 @@ class SendMessageUseCase {
       messageId: response.id,
       agentId: response.model,
       sessionId: response.conversationId,
-      chatCreated: false, // TODO: определить, создался ли новый чат
+      chatCreated: false,
     );
   }
 }

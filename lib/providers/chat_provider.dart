@@ -1,6 +1,7 @@
 // lib/providers/chat_provider.dart
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/logger/app_logger.dart';
 import '../domain/models/message.dart';
 import '../domain/usecases/send_message_usecase.dart';
 import 'session_provider.dart';
@@ -17,8 +18,8 @@ class ChatState {
   final bool isLoading;
   final String? error;
   final bool isStreaming;
-  final String? currentAgentId; // nullable поле
-  final String? currentConversationId; // nullable поле
+  final String? currentAgentId;
+  final String? currentConversationId;
 
   const ChatState({
     this.messages = const [],
@@ -138,8 +139,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     String? agentId,
     String? sessionId,
   }) async {
-    print('📤 ChatNotifier: sendMessage "$text"');
-    print('📤 ChatNotifier: agentId=$agentId, sessionId=$sessionId');
+    AppLogger.info(
+      'Отправка сообщения: "$text" (агент=$agentId, чат=$sessionId)',
+    );
 
     _clearError();
     _addMessage(Message.fromUser(text: text));
@@ -158,10 +160,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       final result = await _sendMessageUseCase.execute(params);
 
-      // Сразу после этого добавь:
       if (result.agentId != null) {
         _setCurrentAgent(result.agentId);
-        print('🔵 ChatNotifier: агент определён: ${result.agentId}');
+        AppLogger.info('Агент определён: ${result.agentId}');
       }
 
       final aiMessage = Message.fromAI(
@@ -177,17 +178,17 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
         if (currentAgentId != result.agentId ||
             currentSessionId != result.sessionId) {
-          print('🔄 ChatNotifier: сессия изменилась!');
-          print('   Было: агент=$currentAgentId, чат=$currentSessionId');
-          print('   Стало: агент=${result.agentId}, чат=${result.sessionId}');
+          AppLogger.info(
+            'Сессия изменилась: агент=$currentAgentId→${result.agentId}, чат=$currentSessionId→${result.sessionId}',
+          );
 
           onSessionChanged?.call(result.agentId!, result.sessionId!);
         }
       }
 
-      print('✅ ChatNotifier: сообщение отправлено успешно');
+      AppLogger.info('Сообщение отправлено успешно');
     } catch (e) {
-      print('❌ ChatNotifier: ошибка в sendMessage: $e');
+      AppLogger.error('Ошибка в sendMessage', e);
       _setError(e.toString());
     } finally {
       _setLoading(false);
@@ -196,7 +197,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   Future<void> loadChat(String agentId, String chatId) async {
-    print('📂 ChatNotifier: loadChat агент=$agentId, чат=$chatId');
+    AppLogger.info('Загрузка чата: агент=$agentId, чат=$chatId');
 
     _setLoading(true);
     _clearError();
@@ -210,9 +211,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       onSessionChanged?.call(agentId, chatId);
 
-      print('✅ ChatNotifier: загружено ${messages.length} сообщений');
+      AppLogger.info('Загружено сообщений: ${messages.length}');
     } catch (e) {
-      print('❌ ChatNotifier: ошибка в loadChat: $e');
+      AppLogger.error('Ошибка в loadChat', e);
       _setError(e.toString());
     } finally {
       _setLoading(false);
@@ -220,7 +221,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   Future<void> createNewChat() async {
-    print('🆕 ChatNotifier: createNewChat');
+    AppLogger.info('Создание нового чата');
 
     _setMessages([]);
     _addWelcomeMessage();
@@ -228,11 +229,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _setCurrentAgent(null);
     _setCurrentConversationId(null);
 
-    print('✅ ChatNotifier: новый чат создан');
+    AppLogger.debug('Новый чат создан');
   }
 
   void clearChat() {
-    print('🗑️ ChatNotifier: clearChat');
+    AppLogger.info('Очистка чата');
+
     _setMessages([]);
     _addWelcomeMessage();
     _clearError();

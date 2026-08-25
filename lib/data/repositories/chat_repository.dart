@@ -6,6 +6,7 @@ import '../models/chat_response_dto.dart';
 import '../../domain/models/agent.dart';
 import '../../domain/models/chat_session.dart';
 import '../../domain/models/message.dart';
+import '../../core/logger/app_logger.dart';
 
 /// Репозиторий для работы с чатом.
 ///
@@ -42,6 +43,7 @@ class ChatRepository {
 
       // 2. Проверяем статус
       if (response.statusCode != 200) {
+        AppLogger.error('Ошибка загрузки агентов: ${response.statusCode}');
         throw Exception('Ошибка загрузки агентов: ${response.statusCode}');
       }
 
@@ -51,11 +53,15 @@ class ChatRepository {
 
       // 4. Преобразуем в модели Agent
       // Фильтруем "auto" — это не агент, а специальное значение для роутинга
-      return models
+      final agents = models
           .where((item) => item['id'] != 'auto')
           .map((json) => Agent.fromJson(json))
           .toList();
+
+      AppLogger.info('Загружено агентов: ${agents.length}');
+      return agents;
     } catch (e) {
+      AppLogger.error('Не удалось загрузить агентов', e);
       throw Exception('Не удалось загрузить агентов: $e');
     }
   }
@@ -79,6 +85,7 @@ class ChatRepository {
 
       // 2. Проверяем статус
       if (response.statusCode != 200 && response.statusCode != 201) {
+        AppLogger.error('Ошибка создания чата: ${response.statusCode}');
         throw Exception('Ошибка создания чата: ${response.statusCode}');
       }
 
@@ -86,8 +93,11 @@ class ChatRepository {
       final Map<String, dynamic> data = jsonDecode(response.body);
 
       // 4. Преобразуем в модель ChatSession
-      return ChatSession.fromJson(data, agentId);
+      final session = ChatSession.fromJson(data, agentId);
+      AppLogger.info('Чат создан: ${session.id}');
+      return session;
     } catch (e) {
+      AppLogger.error('Не удалось создать чат для агента $agentId', e);
       throw Exception('Не удалось создать чат: $e');
     }
   }
@@ -101,11 +111,12 @@ class ChatRepository {
 
       // 2. Проверяем статус
       if (response.statusCode == 404) {
-        // Агент не поддерживает чаты (например, OCR)
+        // Агент не поддерживает чаты
         return [];
       }
 
       if (response.statusCode != 200) {
+        AppLogger.error('Ошибка загрузки чатов: ${response.statusCode}');
         throw Exception('Ошибка загрузки чатов: ${response.statusCode}');
       }
 
@@ -113,10 +124,14 @@ class ChatRepository {
       final List<dynamic> data = jsonDecode(response.body);
 
       // 4. Преобразуем в модели ChatSession
-      return data.map((json) => ChatSession.fromJson(json, agentId)).toList();
+      final chats = data
+          .map((json) => ChatSession.fromJson(json, agentId))
+          .toList();
+      AppLogger.debug('Загружено чатов для агента $agentId: ${chats.length}');
+      return chats;
     } catch (e) {
       // Возвращаем пустой список, чтобы не ломать UI
-      print('⚠️ ChatRepository: ошибка загрузки чатов: $e');
+      AppLogger.warning('Не удалось загрузить чаты для агента $agentId: $e');
       return [];
     }
   }
@@ -136,6 +151,7 @@ class ChatRepository {
 
       // 2. Проверяем статус
       if (response.statusCode != 200) {
+        AppLogger.error('Ошибка загрузки сообщений: ${response.statusCode}');
         throw Exception('Ошибка загрузки сообщений: ${response.statusCode}');
       }
 
@@ -143,10 +159,16 @@ class ChatRepository {
       final List<dynamic> data = jsonDecode(response.body);
 
       // 4. Преобразуем в модели Message
-      return data
+      final messages = data
           .map((json) => Message.fromJson(json as Map<String, dynamic>))
           .toList();
+
+      AppLogger.info(
+        'Загружено сообщений чата $conversationId: ${messages.length}',
+      );
+      return messages;
     } catch (e) {
+      AppLogger.error('Не удалось загрузить сообщения чата $conversationId', e);
       throw Exception('Не удалось загрузить сообщения: $e');
     }
   }
@@ -156,20 +178,13 @@ class ChatRepository {
   // ============================================================
 
   /// Отправить сообщение и получить ответ.
-  ///
-  /// ВНИМАНИЕ! Этот метод пока НЕ РАБОТАЕТ,
-  /// потому что бэкенд возвращает 500 на /v1/chat/completions.
-  ///
-  /// Как только бэкенд починят — мы допишем реализацию.
   Future<ChatResponseDto> sendMessage({
     required List<Message> messages,
     String? conversationId,
     String? forceAgentId,
   }) async {
     try {
-      print(
-        '🔵 ChatRepository: отправка сообщения (${messages.length} сообщений)',
-      );
+      AppLogger.info('Отправка сообщения (${messages.length} сообщений)');
 
       // ---- 1. Строим список messages для API ----
       final List<Map<String, dynamic>> apiMessages = messages.map((msg) {
@@ -190,13 +205,13 @@ class ChatRepository {
         // Продолжаем существующий чат
         body['model'] = forceAgentId;
         body['conversation_id'] = conversationId;
-        print(
-          '🔵 ChatRepository: продолжаем диалог (агент=$forceAgentId, чат=$conversationId)',
+        AppLogger.info(
+          'Продолжаем диалог (агент=$forceAgentId, чат=$conversationId)',
         );
       } else {
         // Новый диалог — авто-роутинг
         body['model'] = 'auto';
-        print('🔵 ChatRepository: новый диалог (авто-роутинг)');
+        AppLogger.info('Новый диалог (авто-роутинг)');
       }
 
       // ---- 4. Отправляем запрос через API ----
@@ -205,13 +220,14 @@ class ChatRepository {
       // ---- 5. Проверяем статус ----
       if (response.statusCode != 200) {
         final errorBody = await response.stream.bytesToString();
+        AppLogger.error('Ошибка сервера: ${response.statusCode} - $errorBody');
         throw Exception('Ошибка сервера: ${response.statusCode} - $errorBody');
       }
 
       // ---- 6. Парсим SSE-поток ----
       return await _parseSseStream(response.stream);
     } catch (e) {
-      print('❌ ChatRepository: ошибка: $e');
+      AppLogger.error('Ошибка при отправке сообщения', e);
       throw Exception('Ошибка при отправке сообщения: $e');
     }
   }
@@ -226,7 +242,7 @@ class ChatRepository {
     String model = 'auto';
     String? conversationId;
 
-    print('🔵 ChatRepository: начинаем парсинг SSE-потока');
+    AppLogger.debug('Начинаем парсинг SSE-потока');
 
     // Читаем поток по частям
     await for (final chunk in stream) {
@@ -247,7 +263,7 @@ class ChatRepository {
 
           // Проверяем на завершение потока
           if (data == '[DONE]') {
-            print('🔵 ChatRepository: поток завершен [DONE]');
+            AppLogger.debug('Поток завершен [DONE]');
             break;
           }
 
@@ -265,7 +281,7 @@ class ChatRepository {
                 if (model != modelValue) {
                   // Логируем только при ИЗМЕНЕНИИ
                   model = modelValue;
-                  print('🔵 ChatRepository: агент определён: $model');
+                  AppLogger.info('Агент определён: $model');
                 }
               }
             }
@@ -275,7 +291,7 @@ class ChatRepository {
               final convId = json['conversation_id'] as String?;
               if (convId != null && conversationId == null) {
                 conversationId = convId;
-                print('🔵 ChatRepository: conversation_id: $conversationId');
+                AppLogger.info('conversation_id: $conversationId');
               }
             }
 
@@ -302,8 +318,8 @@ class ChatRepository {
               }
             }
           } catch (e) {
-            print('⚠️ ChatRepository: ошибка парсинга JSON: $e');
-            print('📄 Строка: $data');
+            AppLogger.warning('Ошибка парсинга JSON: $e');
+            AppLogger.debug('Строка: $data');
             continue;
           }
         }
@@ -320,8 +336,9 @@ class ChatRepository {
       displayText = displayText.replaceAll(oldText, newText);
     }
 
-    print('✅ ChatRepository: ответ получен (${displayText.length} символов)');
-    print('🔵 ChatRepository: агент=$model, чат=$conversationId');
+    AppLogger.info(
+      'Ответ получен (${displayText.length} символов, агент=$model, чат=$conversationId)',
+    );
 
     return ChatResponseDto(
       id: id,

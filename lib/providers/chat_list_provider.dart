@@ -1,6 +1,7 @@
 // lib/providers/chat_list_provider.dart
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/logger/app_logger.dart';
 import '../domain/models/chat_session.dart';
 import '../domain/models/agent.dart';
 import '../data/repositories/chat_repository.dart';
@@ -99,9 +100,7 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
       return;
     }
 
-    print(
-      '📦 ChatListNotifier: загружаем чаты для ${agents.length} агентов...',
-    );
+    AppLogger.info('Загружаем чаты для ${agents.length} агентов...');
 
     _setLoading(true);
     _clearError();
@@ -115,7 +114,9 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
           final chats = await _repository.getConversations(agentId: agent.id);
           allChats.addAll(chats);
         } catch (e) {
-          print('⚠️ Не удалось загрузить чаты для агента ${agent.id}: $e');
+          AppLogger.warning(
+            'Не удалось загрузить чаты для агента ${agent.id}: $e',
+          );
         }
       }
 
@@ -123,9 +124,9 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
       allChats.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
       _setChats(allChats);
-      print('✅ ChatListNotifier: загружено ${allChats.length} чатов');
+      AppLogger.info('Загружено чатов: ${allChats.length}');
     } catch (e) {
-      print('❌ ChatListNotifier: ошибка загрузки: $e');
+      AppLogger.error('Ошибка загрузки чатов', e);
       _setError(e.toString());
     } finally {
       _setLoading(false);
@@ -134,12 +135,12 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
 
   /// Принудительно обновить список чатов
   Future<void> refresh({List<Agent>? agents}) async {
-    print('🔄 ChatListNotifier: принудительное обновление...');
+    AppLogger.debug('Принудительное обновление списка чатов...');
 
     List<Agent>? agentsToUse = agents ?? _cachedAgents;
 
     if (agentsToUse == null || agentsToUse.isEmpty) {
-      print('⚠️ ChatListNotifier: нет агентов для загрузки');
+      AppLogger.warning('Нет агентов для загрузки чатов');
       return;
     }
 
@@ -153,6 +154,7 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
 
   /// Очистить список чатов
   void clear() {
+    AppLogger.debug('Очистка списка чатов');
     _setChats([]);
     _cachedAgents = null;
   }
@@ -165,7 +167,7 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
 // 3. ПРОВАЙДЕРЫ
 // ============================================================
 
-/// Провайдер для списка чатов (НОВЫЙ, через Repository)
+/// Провайдер для списка чатов
 final chatListNotifierProvider =
     StateNotifierProvider<ChatListNotifier, ChatListState>((ref) {
       final repository = ref.read(chatRepositoryProvider);
