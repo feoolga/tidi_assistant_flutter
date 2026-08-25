@@ -261,9 +261,12 @@ class ChatRepository {
             // ---- Извлекаем model (агента) ----
             if (json.containsKey('model')) {
               final modelValue = json['model'] as String?;
-              if (modelValue != null && modelValue != 'auto') {
-                model = modelValue;
-                print('🔵 ChatRepository: агент определен: $model');
+              if (modelValue != null && modelValue.isNotEmpty) {
+                if (model != modelValue) {
+                  // Логируем только при ИЗМЕНЕНИИ
+                  model = modelValue;
+                  print('🔵 ChatRepository: агент определён: $model');
+                }
               }
             }
 

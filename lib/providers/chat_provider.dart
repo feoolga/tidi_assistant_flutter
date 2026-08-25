@@ -17,8 +17,8 @@ class ChatState {
   final bool isLoading;
   final String? error;
   final bool isStreaming;
-  final String? currentAgentId;
-  final String? currentConversationId;
+  final String? currentAgentId; // nullable поле
+  final String? currentConversationId; // nullable поле
 
   const ChatState({
     this.messages = const [],
@@ -33,22 +33,36 @@ class ChatState {
     return const ChatState();
   }
 
+  // Специальный объект-маркер
+  // Он означает: "это поле не было передано в copyWith"
+  static const _unset = Object();
+
   ChatState copyWith({
     List<Message>? messages,
     bool? isLoading,
     String? error,
     bool? isStreaming,
-    String? currentAgentId,
-    String? currentConversationId,
+    // Используем Object? вместо String?
+    // По умолчанию — маркер _unset
+    Object? currentAgentId = _unset,
+    Object? currentConversationId = _unset,
   }) {
     return ChatState(
+      // Обычные поля — как раньше (null = не передано)
       messages: messages ?? this.messages,
       isLoading: isLoading ?? this.isLoading,
       error: error ?? this.error,
       isStreaming: isStreaming ?? this.isStreaming,
-      currentAgentId: currentAgentId ?? this.currentAgentId,
-      currentConversationId:
-          currentConversationId ?? this.currentConversationId,
+
+      // Поля со sentinel:
+      // Если параметр — маркер, оставляем старое значение
+      // Иначе — используем переданное (даже если это null!)
+      currentAgentId: identical(currentAgentId, _unset)
+          ? this.currentAgentId
+          : currentAgentId as String?,
+      currentConversationId: identical(currentConversationId, _unset)
+          ? this.currentConversationId
+          : currentConversationId as String?,
     );
   }
 

@@ -96,13 +96,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _startNewChat() {
     // 👇 ИСПОЛЬЗУЕМ СЕРВИС
     ref.read(chatProvider.notifier).createNewChat();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('🔄 Новый чат создан'),
-        duration: Duration(seconds: 1),
-      ),
-    );
   }
 
   // ============================================================

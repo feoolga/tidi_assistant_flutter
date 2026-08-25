@@ -129,22 +129,12 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
     }
   }
 
-  void _createNewChat(BuildContext context) async {
+  void _createNewChat(BuildContext context) {
+    // 1. Закрываем дровер
     Navigator.pop(context);
 
-    // Обновляем список чатов
-    await _refreshChats();
-
+    // 2. Вызываем колбэк, который очистит локальное состояние
     widget.onChatCreated?.call();
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('🆕 Создан новый чат'),
-          duration: Duration(seconds: 1),
-        ),
-      );
-    }
   }
 
   Widget _buildChatList(
