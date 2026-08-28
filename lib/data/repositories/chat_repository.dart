@@ -78,10 +78,7 @@ class ChatRepository {
   }) async {
     try {
       // 1. Отправляем запрос через API
-      final response = await _api.createConversation(
-        agentId: agentId,
-        title: title,
-      );
+      final response = await _api.createConversation(title: title);
 
       // 2. Проверяем статус
       if (response.statusCode != 200 && response.statusCode != 201) {
@@ -107,7 +104,7 @@ class ChatRepository {
   Future<List<ChatSession>> getConversations({required String agentId}) async {
     try {
       // 1. Отправляем запрос через API
-      final response = await _api.getConversations(agentId: agentId);
+      final response = await _api.getConversations();
 
       // 2. Проверяем статус
       if (response.statusCode == 404) {
@@ -144,10 +141,7 @@ class ChatRepository {
   }) async {
     try {
       // 1. Отправляем запрос через API
-      final response = await _api.getMessages(
-        agentId: agentId,
-        conversationId: conversationId,
-      );
+      final response = await _api.getMessages(conversationId: conversationId);
 
       // 2. Проверяем статус
       if (response.statusCode != 200) {

@@ -33,41 +33,76 @@ class ChatApi {
     return await _httpClient.get('/v1/models');
   }
 
+  // ============================================================
+  // 4. РАБОТА С ЧАТАМИ (CONVERSATIONS)
+  // ============================================================
+
   /// Создать новый чат.
-  /// POST /agents/{agentId}/v1/platform/conversations
-  Future<http.Response> createConversation({
-    required String agentId,
-    String? title,
-  }) async {
+  /// POST /v1/platform/conversations
+  Future<http.Response> createConversation({String? title}) async {
     final Map<String, dynamic> body = title != null ? {'title': title} : {};
+    return await _httpClient.post('/v1/platform/conversations', body: body);
+  }
+
+  /// Получить список чатов пользователя.
+  /// GET /v1/platform/conversations
+  Future<http.Response> getConversations() async {
+    return await _httpClient.get('/v1/platform/conversations');
+  }
+
+  /// Получить сообщения чата.
+  /// GET /v1/platform/conversations/{conversationId}/messages
+  Future<http.Response> getMessages({required String conversationId}) async {
+    return await _httpClient.get(
+      '/v1/platform/conversations/$conversationId/messages',
+    );
+  }
+
+  // ============================================================
+  // 5. ОТПРАВКА СООБЩЕНИЙ
+  // ============================================================
+
+  /// Отправить сообщение (стрим) через Responses API.
+  /// POST /v1/responses
+  Future<http.StreamedResponse> sendMessage({
+    required Map<String, dynamic> body,
+  }) async {
+    return await _httpClient.postStream('/v1/responses', body: body);
+  }
+
+  // ============================================================
+  // 6. ФИДБЭК И ИСТОЧНИКИ
+  // ============================================================
+
+  /// Поставить/обновить оценку ответа.
+  /// POST /v1/chat/completions/{completionId}/feedback
+  Future<http.Response> setFeedback({
+    required String completionId,
+    required Map<String, dynamic> body,
+  }) async {
     return await _httpClient.post(
-      '/agents/$agentId/v1/platform/conversations',
+      '/v1/chat/completions/$completionId/feedback',
       body: body,
     );
   }
 
-  /// Получить список чатов.
-  /// GET /agents/{agentId}/v1/platform/conversations
-  Future<http.Response> getConversations({required String agentId}) async {
-    return await _httpClient.get('/agents/$agentId/v1/platform/conversations');
+  /// Получить оценку ответа.
+  /// GET /v1/chat/completions/{completionId}/feedback
+  Future<http.Response> getFeedback({required String completionId}) async {
+    return await _httpClient.get('/v1/chat/completions/$completionId/feedback');
   }
 
-  /// Получить сообщения чата.
-  /// GET /agents/{agentId}/v1/platform/conversations/{conversationId}/messages
-  Future<http.Response> getMessages({
-    required String agentId,
-    required String conversationId,
-  }) async {
-    return await _httpClient.get(
-      '/agents/$agentId/v1/platform/conversations/$conversationId/messages',
+  /// Удалить оценку ответа.
+  /// DELETE /v1/chat/completions/{completionId}/feedback
+  Future<http.Response> deleteFeedback({required String completionId}) async {
+    return await _httpClient.delete(
+      '/v1/chat/completions/$completionId/feedback',
     );
   }
 
-  /// Отправить сообщение (стрим).
-  /// POST /v1/chat/completions
-  Future<http.StreamedResponse> sendMessage({
-    required Map<String, dynamic> body,
-  }) async {
-    return await _httpClient.postStream('/v1/chat/completions', body: body);
+  /// Получить источники ответа.
+  /// GET /v1/chat/completions/{completionId}/sources
+  Future<http.Response> getSources({required String completionId}) async {
+    return await _httpClient.get('/v1/chat/completions/$completionId/sources');
   }
 }
