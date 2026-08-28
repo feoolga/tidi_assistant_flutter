@@ -149,11 +149,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _setStreaming(true);
 
     try {
-      final currentMessages = state.messages;
-
       final params = SendMessageParams(
         text: text,
-        history: currentMessages,
         agentId: agentId,
         sessionId: sessionId,
       );

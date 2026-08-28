@@ -173,52 +173,39 @@ class ChatRepository {
 
   /// Отправить сообщение и получить ответ.
   Future<ChatResponseDto> sendMessage({
-    required List<Message> messages,
+    required String text,
     String? conversationId,
-    String? forceAgentId,
+    String? agentId,
   }) async {
     try {
-      AppLogger.info('Отправка сообщения (${messages.length} сообщений)');
+      AppLogger.info('Отправка сообщения: "$text"');
 
-      // ---- 1. Строим список messages для API ----
-      final List<Map<String, dynamic>> apiMessages = messages.map((msg) {
-        return {
-          'role': msg.isFromUser ? 'user' : 'assistant',
-          'content': msg.text,
-        };
-      }).toList();
-
-      // ---- 2. Формируем тело запроса ----
+      // ---- 1. Формируем тело запроса для Responses API ----
       final Map<String, dynamic> body = {
-        'messages': apiMessages,
+        'model':
+            agentId ??
+            'auto', // если есть agentId — прямой вызов, иначе авто-роутинг
+        'input': text, // только текущее сообщение, не вся история!
         'stream': true,
       };
 
-      // ---- 3. Определяем модель ----
-      if (conversationId != null && forceAgentId != null) {
-        // Продолжаем существующий чат
-        body['model'] = forceAgentId;
-        body['conversation_id'] = conversationId;
-        AppLogger.info(
-          'Продолжаем диалог (агент=$forceAgentId, чат=$conversationId)',
-        );
-      } else {
-        // Новый диалог — авто-роутинг
-        body['model'] = 'auto';
-        AppLogger.info('Новый диалог (авто-роутинг)');
+      // ---- 2. Добавляем conversation, если есть ----
+      if (conversationId != null && conversationId.isNotEmpty) {
+        body['conversation'] = conversationId;
+        AppLogger.info('Продолжаем чат: $conversationId');
       }
 
-      // ---- 4. Отправляем запрос через API ----
+      // ---- 3. Отправляем запрос через API ----
       final response = await _api.sendMessage(body: body);
 
-      // ---- 5. Проверяем статус ----
+      // ---- 4. Проверяем статус ----
       if (response.statusCode != 200) {
         final errorBody = await response.stream.bytesToString();
         AppLogger.error('Ошибка сервера: ${response.statusCode} - $errorBody');
-        throw Exception('Ошибка сервера: ${response.statusCode} - $errorBody');
+        throw Exception('Ошибка сервера: ${response.statusCode}');
       }
 
-      // ---- 6. Парсим SSE-поток ----
+      // ---- 5. Парсим SSE-поток ----
       return await _parseSseStream(response.stream);
     } catch (e) {
       AppLogger.error('Ошибка при отправке сообщения', e);
@@ -226,19 +213,30 @@ class ChatRepository {
     }
   }
 
-  /// Парсит SSE-поток и собирает ответ.
+  /// Парсит SSE-поток в формате Responses API.
+  ///
+  /// Responses API присылает события в виде:
+  ///   event: response.created
+  ///   data: {"id": "...", "model": "...", "conversation_id": "..."}
+  ///
+  ///   event: response.output_text.delta
+  ///   data: {"delta": "текст"}
+  ///
+  ///   event: response.completed
+  ///   data: {"status": "completed", "usage": {...}}
   ///
   /// Возвращает ChatResponseDto с полным текстом и метаданными.
   Future<ChatResponseDto> _parseSseStream(Stream<List<int>> stream) async {
+    // ---- 1. Начинаем с пустого DTO ----
+    var dto = ChatResponseDto.empty();
+
+    // ---- 2. Буфер для накопления строк ----
     String buffer = '';
-    String fullText = '';
-    String id = '';
-    String model = 'auto';
-    String? conversationId;
+    String? currentEventType;
 
-    AppLogger.debug('Начинаем парсинг SSE-потока');
+    AppLogger.debug('Начинаем парсинг SSE-потока (Responses API)');
 
-    // Читаем поток по частям
+    // ---- 3. Читаем поток по частям ----
     await for (final chunk in stream) {
       // Декодируем байты в строку
       buffer += utf8.decode(chunk, allowMalformed: true);
@@ -249,69 +247,80 @@ class ChatRepository {
 
       // Обрабатываем все полные строки
       for (int i = 0; i < lines.length - 1; i++) {
-        final line = lines[i];
+        final line = lines[i].trim();
 
-        // Ищем строки с data:
+        // ---- 4. Пропускаем пустые строки ----
+        if (line.isEmpty) continue;
+
+        // ---- 5. Определяем тип события ----
+        if (line.startsWith('event: ')) {
+          currentEventType = line.substring(7).trim();
+          AppLogger.debug('Событие: $currentEventType');
+          continue;
+        }
+
+        // ---- 6. Обрабатываем данные события ----
         if (line.startsWith('data: ')) {
           final data = line.substring(6).trim();
 
-          // Проверяем на завершение потока
-          if (data == '[DONE]') {
-            AppLogger.debug('Поток завершен [DONE]');
-            break;
-          }
-
-          // Пропускаем пустые строки
+          // Пропускаем пустые данные
           if (data.isEmpty) continue;
 
+          // ---- 7. Парсим JSON ----
           try {
-            // Парсим JSON
             final json = jsonDecode(data) as Map<String, dynamic>;
 
-            // ---- Извлекаем model (агента) ----
-            if (json.containsKey('model')) {
-              final modelValue = json['model'] as String?;
-              if (modelValue != null && modelValue.isNotEmpty) {
-                if (model != modelValue) {
-                  // Логируем только при ИЗМЕНЕНИИ
-                  model = modelValue;
-                  AppLogger.info('Агент определён: $model');
-                }
-              }
-            }
+            // ---- 8. Обрабатываем в зависимости от типа события ----
+            if (currentEventType == 'response.created') {
+              // ---- Событие: response.created ----
+              // Содержит id, model, conversation_id
+              final id = json['id'] as String? ?? '';
+              final model = json['model'] as String? ?? 'auto';
+              final conversationId = json['conversation_id'] as String?;
 
-            // ---- Извлекаем conversationId ----
-            if (json.containsKey('conversation_id')) {
-              final convId = json['conversation_id'] as String?;
-              if (convId != null && conversationId == null) {
-                conversationId = convId;
-                AppLogger.info('conversation_id: $conversationId');
-              }
-            }
+              dto = dto.copyWith(
+                id: id,
+                model: model,
+                conversationId: conversationId,
+              );
 
-            // ---- Извлекаем id сообщения ----
-            if (json.containsKey('id')) {
-              final idValue = json['id'] as String?;
-              if (idValue != null && id.isEmpty) {
-                id = idValue;
+              AppLogger.info(
+                'Ответ создан: id=$id, model=$model, conversationId=$conversationId',
+              );
+            } else if (currentEventType == 'response.output_text.delta') {
+              // ---- Событие: response.output_text.delta ----
+              // Содержит очередной кусок текста в поле "delta"
+              final delta = json['delta'] as String? ?? '';
+              if (delta.isNotEmpty) {
+                dto = dto.copyWith(content: dto.content + delta);
               }
-            }
+            } else if (currentEventType == 'response.completed') {
+              // ---- Событие: response.completed ----
+              // Завершение потока
+              AppLogger.info('Поток завершён (response.completed)');
 
-            // ---- Собираем токены из choices ----
-            if (json.containsKey('choices')) {
-              final choices = json['choices'] as List<dynamic>?;
-              if (choices != null && choices.isNotEmpty) {
-                final choice = choices.first as Map<String, dynamic>;
-                final delta = choice['delta'] as Map<String, dynamic>?;
-                if (delta != null) {
-                  final content = delta['content'] as String?;
-                  if (content != null && content.isNotEmpty) {
-                    fullText += content;
-                  }
-                }
+              // ---- Заменяем "Источники:" на "Проанализированные источники:" ----
+              String finalText = dto.content.trim();
+              const String oldText = '\n\nИсточники:\n';
+              const String newText = '\n\nПроанализированные источники:\n';
+              if (finalText.contains(oldText)) {
+                finalText = finalText.replaceAll(oldText, newText);
               }
+
+              // ---- Возвращаем финальный DTO ----
+              return ChatResponseDto(
+                id: dto.id,
+                model: dto.model,
+                conversationId: dto.conversationId,
+                content: finalText,
+              );
+            } else {
+              // ---- Неизвестное событие — логируем, но не падаем ----
+              AppLogger.warning('Неизвестное событие: $currentEventType');
+              AppLogger.debug('Данные: $data');
             }
           } catch (e) {
+            // ---- Ошибка парсинга JSON ----
             AppLogger.warning('Ошибка парсинга JSON: $e');
             AppLogger.debug('Строка: $data');
             continue;
@@ -320,25 +329,22 @@ class ChatRepository {
       }
     }
 
-    // ---- Формируем результат ----
-    String displayText = fullText.trim();
+    // ---- 9. Если поток завершился без response.completed ----
+    AppLogger.warning('Поток завершился без события response.completed');
 
-    // Заменяем "Источники:" на "Проанализированные источники:"
+    // Возвращаем то, что успели собрать
+    String finalText = dto.content.trim();
     const String oldText = '\n\nИсточники:\n';
     const String newText = '\n\nПроанализированные источники:\n';
-    if (displayText.contains(oldText)) {
-      displayText = displayText.replaceAll(oldText, newText);
+    if (finalText.contains(oldText)) {
+      finalText = finalText.replaceAll(oldText, newText);
     }
 
-    AppLogger.info(
-      'Ответ получен (${displayText.length} символов, агент=$model, чат=$conversationId)',
-    );
-
     return ChatResponseDto(
-      id: id,
-      model: model,
-      conversationId: conversationId,
-      content: displayText,
+      id: dto.id,
+      model: dto.model,
+      conversationId: dto.conversationId,
+      content: finalText,
     );
   }
 }

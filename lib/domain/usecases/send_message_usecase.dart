@@ -2,7 +2,6 @@
 
 import '../../data/repositories/chat_repository.dart';
 import '../../core/logger/app_logger.dart';
-import '../models/message.dart';
 
 // ============================================================
 // 1. ПАРАМЕТРЫ
@@ -13,21 +12,13 @@ class SendMessageParams {
   /// Текст сообщения пользователя
   final String text;
 
-  /// Вся история диалога (сообщения пользователя и AI)
-  final List<Message> history;
-
   /// ID агента (если уже знаем, кого вызывать)
   final String? agentId;
 
   /// ID сессии/чата (если продолжаем диалог)
   final String? sessionId;
 
-  const SendMessageParams({
-    required this.text,
-    required this.history,
-    this.agentId,
-    this.sessionId,
-  });
+  const SendMessageParams({required this.text, this.agentId, this.sessionId});
 
   /// Есть ли активная сессия (агент + чат)
   bool get hasSession => agentId != null && sessionId != null;
@@ -72,10 +63,9 @@ class SendMessageResult {
 /// Отвечает на вопрос: "Что делает приложение, когда пользователь отправляет сообщение?"
 ///
 /// Шаги:
-/// 1. Берет историю сообщений
-/// 2. Добавляет новое сообщение пользователя
-/// 3. Отправляет всё в Repository
-/// 4. Возвращает ответ
+/// 1. Берёт текст сообщения
+/// 2. Отправляет его в Repository
+/// 3. Возвращает ответ
 class SendMessageUseCase {
   // ============================================================
   // 1. ЗАВИСИМОСТИ
@@ -97,23 +87,15 @@ class SendMessageUseCase {
   /// Выполнить сценарий: отправить сообщение.
   Future<SendMessageResult> execute(SendMessageParams params) async {
     AppLogger.info('Отправка сообщения: "${params.text}"');
-    AppLogger.debug('История: ${params.history.length} сообщений');
 
-    // ---- 1. Формируем полную историю ----
-    // Добавляем новое сообщение пользователя в конец
-    final fullHistory = [
-      ...params.history,
-      Message.fromUser(text: params.text),
-    ];
-
-    // ---- 2. Отправляем через Repository ----
+    // ---- 1. Отправляем через Repository ----
     final response = await _repository.sendMessage(
-      messages: fullHistory,
+      text: params.text,
       conversationId: params.sessionId,
-      forceAgentId: params.agentId,
+      agentId: params.agentId,
     );
 
-    // ---- 3. Формируем результат ----
+    // ---- 2. Формируем результат ----
     AppLogger.info(
       'Сообщение отправлено (агент=${response.model}, чат=${response.conversationId})',
     );
