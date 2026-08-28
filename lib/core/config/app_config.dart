@@ -1,49 +1,58 @@
 // lib/core/config/app_config.dart
 
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 /// Конфигурация приложения.
-/// 
+///
 /// Здесь хранятся все настройки в одном месте.
 /// Если нужно поменять URL сервера или таймауты - меняем только здесь.
 class AppConfig {
   // ============================================================
   // 1. БАЗОВЫЙ URL СЕРВЕРА
   // ============================================================
-  
-  /// Базовый URL для API-запросов
-  /// 
-  /// Сейчас используем актуальный адрес бэкенда
-  /// Позже можно будет вынести в .env файл
-  static const String baseUrl = 'http://89.109.54.73:8005/api';
-  
+
+  // ---- 1. БАЗОВЫЙ URL ----
+  static String get baseUrl {
+    final url = dotenv.env['API_URL'];
+    if (url == null || url.isEmpty) {
+      throw Exception('API_URL не задан в .env файле');
+    }
+    return url;
+  }
+
   // ============================================================
   // 2. ПОЛЬЗОВАТЕЛЬ (пока временно)
   // ============================================================
-  
-  /// ID пользователя (временное решение)
-  /// 
-  /// Позже будем получать из авторизации
-  static const String userId = '11111111-1111-1111-1111-111111111111';
-  
+
+  // ---- 2. ID ПОЛЬЗОВАТЕЛЯ ----
+  static String get userId {
+    final id = dotenv.env['USER_ID'];
+    if (id == null || id.isEmpty) {
+      throw Exception('USER_ID не задан в .env файле');
+    }
+    return id;
+  }
+
   // ============================================================
   // 3. ТАЙМАУТЫ
   // ============================================================
-  
+
   /// Таймаут для обычных запросов (10 секунд)
   static const Duration timeout = Duration(seconds: 10);
-  
+
   /// Таймаут для стримов (дольше, так как ответ может идти долго)
   static const Duration streamTimeout = Duration(seconds: 60);
-  
+
   // ============================================================
   // 4. ЗАГОЛОВКИ ПО УМОЛЧАНИЮ
   // ============================================================
-  
+
   /// Заголовки, которые отправляются с каждым запросом
   static const Map<String, String> defaultHeaders = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
   };
-  
+
   /// Заголовки для стримов (SSE)
   static const Map<String, String> streamHeaders = {
     'Content-Type': 'application/json',
