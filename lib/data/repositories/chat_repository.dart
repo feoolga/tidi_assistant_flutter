@@ -77,19 +77,17 @@ class ChatRepository {
     String? title,
   }) async {
     try {
-      // 1. Отправляем запрос через API
-      final response = await _api.createConversation(title: title);
+      final response = await _api.createConversation(
+        agentId: agentId,
+        title: title,
+      );
 
-      // 2. Проверяем статус
       if (response.statusCode != 200 && response.statusCode != 201) {
         AppLogger.error('Ошибка создания чата: ${response.statusCode}');
         throw Exception('Ошибка создания чата: ${response.statusCode}');
       }
 
-      // 3. Парсим ответ
       final Map<String, dynamic> data = jsonDecode(response.body);
-
-      // 4. Преобразуем в модель ChatSession
       final session = ChatSession.fromJson(data, agentId);
       AppLogger.info('Чат создан: ${session.id}');
       return session;
@@ -103,12 +101,9 @@ class ChatRepository {
   /// GET /agents/{agentId}/v1/platform/conversations
   Future<List<ChatSession>> getConversations({required String agentId}) async {
     try {
-      // 1. Отправляем запрос через API
-      final response = await _api.getConversations();
+      final response = await _api.getConversations(agentId: agentId);
 
-      // 2. Проверяем статус
       if (response.statusCode == 404) {
-        // Агент не поддерживает чаты
         return [];
       }
 
@@ -117,17 +112,13 @@ class ChatRepository {
         throw Exception('Ошибка загрузки чатов: ${response.statusCode}');
       }
 
-      // 3. Парсим ответ
       final List<dynamic> data = jsonDecode(response.body);
-
-      // 4. Преобразуем в модели ChatSession
       final chats = data
           .map((json) => ChatSession.fromJson(json, agentId))
           .toList();
       AppLogger.debug('Загружено чатов для агента $agentId: ${chats.length}');
       return chats;
     } catch (e) {
-      // Возвращаем пустой список, чтобы не ломать UI
       AppLogger.warning('Не удалось загрузить чаты для агента $agentId: $e');
       return [];
     }
@@ -140,19 +131,17 @@ class ChatRepository {
     required String conversationId,
   }) async {
     try {
-      // 1. Отправляем запрос через API
-      final response = await _api.getMessages(conversationId: conversationId);
+      final response = await _api.getMessages(
+        agentId: agentId,
+        conversationId: conversationId,
+      );
 
-      // 2. Проверяем статус
       if (response.statusCode != 200) {
         AppLogger.error('Ошибка загрузки сообщений: ${response.statusCode}');
         throw Exception('Ошибка загрузки сообщений: ${response.statusCode}');
       }
 
-      // 3. Парсим ответ
       final List<dynamic> data = jsonDecode(response.body);
-
-      // 4. Преобразуем в модели Message
       final messages = data
           .map((json) => Message.fromJson(json as Map<String, dynamic>))
           .toList();
@@ -180,32 +169,25 @@ class ChatRepository {
     try {
       AppLogger.info('Отправка сообщения: "$text"');
 
-      // ---- 1. Формируем тело запроса для Responses API ----
       final Map<String, dynamic> body = {
-        'model':
-            agentId ??
-            'auto', // если есть agentId — прямой вызов, иначе авто-роутинг
-        'input': text, // только текущее сообщение, не вся история!
+        'model': agentId ?? 'auto',
+        'input': text, // ← только строка, НЕ массив!
         'stream': true,
       };
 
-      // ---- 2. Добавляем conversation, если есть ----
       if (conversationId != null && conversationId.isNotEmpty) {
-        body['conversation'] = conversationId;
+        body['conversation_id'] = conversationId;
         AppLogger.info('Продолжаем чат: $conversationId');
       }
 
-      // ---- 3. Отправляем запрос через API ----
       final response = await _api.sendMessage(body: body);
 
-      // ---- 4. Проверяем статус ----
       if (response.statusCode != 200) {
         final errorBody = await response.stream.bytesToString();
         AppLogger.error('Ошибка сервера: ${response.statusCode} - $errorBody');
         throw Exception('Ошибка сервера: ${response.statusCode}');
       }
 
-      // ---- 5. Парсим SSE-поток ----
       return await _parseSseStream(response.stream);
     } catch (e) {
       AppLogger.error('Ошибка при отправке сообщения', e);
