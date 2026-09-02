@@ -209,79 +209,64 @@ class ChatRepository {
   ///
   /// Возвращает ChatResponseDto с полным текстом и метаданными.
   Future<ChatResponseDto> _parseSseStream(Stream<List<int>> stream) async {
-    // ---- 1. Начинаем с пустого DTO ----
     var dto = ChatResponseDto.empty();
-
-    // ---- 2. Буфер для накопления строк ----
     String buffer = '';
     String? currentEventType;
+    bool firstDelta = true;
 
     AppLogger.debug('Начинаем парсинг SSE-потока (Responses API)');
 
-    // ---- 3. Читаем поток по частям ----
     await for (final chunk in stream) {
-      // Декодируем байты в строку
       buffer += utf8.decode(chunk, allowMalformed: true);
-
-      // Разбиваем на строки
       final lines = buffer.split('\n');
       buffer = lines.last;
 
-      // Обрабатываем все полные строки
       for (int i = 0; i < lines.length - 1; i++) {
         final line = lines[i].trim();
-
-        // ---- 4. Пропускаем пустые строки ----
         if (line.isEmpty) continue;
 
-        // ---- 5. Определяем тип события ----
         if (line.startsWith('event: ')) {
           currentEventType = line.substring(7).trim();
-          AppLogger.debug('Событие: $currentEventType');
           continue;
         }
 
-        // ---- 6. Обрабатываем данные события ----
         if (line.startsWith('data: ')) {
           final data = line.substring(6).trim();
-
-          // Пропускаем пустые данные
           if (data.isEmpty) continue;
 
-          // ---- 7. Парсим JSON ----
           try {
             final json = jsonDecode(data) as Map<String, dynamic>;
 
-            // ---- 8. Обрабатываем в зависимости от типа события ----
             if (currentEventType == 'response.created') {
-              // ---- Событие: response.created ----
-              // Содержит id, model, conversation_id
               final id = json['id'] as String? ?? '';
-              final model = json['model'] as String? ?? 'auto';
               final conversationId = json['conversation_id'] as String?;
-
-              dto = dto.copyWith(
-                id: id,
-                model: model,
-                conversationId: conversationId,
-              );
-
-              AppLogger.info(
-                'Ответ создан: id=$id, model=$model, conversationId=$conversationId',
-              );
+              dto = dto.copyWith(id: id, conversationId: conversationId);
+              AppLogger.info('Ответ создан: id=$id');
+            } else if (currentEventType == 'response.in_progress') {
+              // 🔥 БЕРЁМ model и conversation_id ОТСЮДА
+              final response = json['response'] as Map<String, dynamic>?;
+              if (response != null) {
+                final model = response['model'] as String? ?? 'auto';
+                final conversationId = response['conversation_id'] as String?;
+                dto = dto.copyWith(
+                  model: model,
+                  conversationId: conversationId ?? dto.conversationId,
+                );
+                AppLogger.info('Агент: $model, чат: $conversationId');
+              }
             } else if (currentEventType == 'response.output_text.delta') {
-              // ---- Событие: response.output_text.delta ----
-              // Содержит очередной кусок текста в поле "delta"
               final delta = json['delta'] as String? ?? '';
               if (delta.isNotEmpty) {
+                if (firstDelta) {
+                  AppLogger.debug('Начало генерации ответа...');
+                  firstDelta = false;
+                }
                 dto = dto.copyWith(content: dto.content + delta);
               }
             } else if (currentEventType == 'response.completed') {
-              // ---- Событие: response.completed ----
-              // Завершение потока
-              AppLogger.info('Поток завершён (response.completed)');
+              AppLogger.info('Поток завершён');
 
-              // ---- Заменяем "Источники:" на "Проанализированные источники:" ----
+              // Заменяем "Источники:" на "Проанализированные источники:"
               String finalText = dto.content.trim();
               const String oldText = '\n\nИсточники:\n';
               const String newText = '\n\nПроанализированные источники:\n';
@@ -289,44 +274,24 @@ class ChatRepository {
                 finalText = finalText.replaceAll(oldText, newText);
               }
 
-              // ---- Возвращаем финальный DTO ----
               return ChatResponseDto(
                 id: dto.id,
-                model: dto.model,
+                model: dto.model, // теперь здесь будет "epoz", а не "auto"
                 conversationId: dto.conversationId,
                 content: finalText,
               );
-            } else {
-              // ---- Неизвестное событие — логируем, но не падаем ----
-              AppLogger.warning('Неизвестное событие: $currentEventType');
-              AppLogger.debug('Данные: $data');
             }
+            // Неизвестные события — игнорируем без логов
           } catch (e) {
-            // ---- Ошибка парсинга JSON ----
             AppLogger.warning('Ошибка парсинга JSON: $e');
-            AppLogger.debug('Строка: $data');
             continue;
           }
         }
       }
     }
 
-    // ---- 9. Если поток завершился без response.completed ----
-    AppLogger.warning('Поток завершился без события response.completed');
-
-    // Возвращаем то, что успели собрать
-    String finalText = dto.content.trim();
-    const String oldText = '\n\nИсточники:\n';
-    const String newText = '\n\nПроанализированные источники:\n';
-    if (finalText.contains(oldText)) {
-      finalText = finalText.replaceAll(oldText, newText);
-    }
-
-    return ChatResponseDto(
-      id: dto.id,
-      model: dto.model,
-      conversationId: dto.conversationId,
-      content: finalText,
-    );
+    // Если поток завершился без response.completed
+    AppLogger.warning('Поток завершился без response.completed');
+    return dto;
   }
 }
