@@ -160,6 +160,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       agentId: agentId,
       sessionId: sessionId,
     );
+    AppLogger.debug('🔄 Создано пустое сообщение AI (id: $tempId)');
     _addMessage(aiMessage);
 
     try {
@@ -185,6 +186,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
           // Обновляем текст
           fullText = event.data['text'] as String? ?? '';
 
+          if (fullText.length <= 10) {
+            AppLogger.debug('📝 Получен первый чанк: "$fullText"');
+          }
+
           // Обновляем последнее сообщение (оно AI)
           final currentMessages = state.messages;
           if (currentMessages.isNotEmpty) {
@@ -207,6 +212,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
           finalAgentId = event.data['agentId'] as String?;
           finalSessionId = event.data['conversationId'] as String?;
           messageId = event.data['messageId'] as String?;
+
+          // ✅ ЛОГ: получен complete
+          AppLogger.info('✅ Ответ получен полностью');
+          AppLogger.debug('   📌 Агент: $finalAgentId');
+          AppLogger.debug('   📌 Чат: $finalSessionId');
+          AppLogger.debug('   📌 ID сообщения: $messageId');
+          AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
 
           // Обновляем текущего агента и сессию
           if (finalAgentId != null) {
@@ -255,6 +267,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
           // Обработка ошибки
           final errorMessage =
               event.data['error'] as String? ?? 'Неизвестная ошибка';
+
+          // ✅ ЛОГ: ошибка в потоке
+          AppLogger.error('❌ Ошибка в потоке: $errorMessage');
+
           throw Exception(errorMessage);
         }
       }
@@ -279,6 +295,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       _setError(e.toString());
     } finally {
+      AppLogger.debug('🏁 Завершение обработки сообщения');
+
       _setLoading(false);
       _setStreaming(false);
     }

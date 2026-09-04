@@ -177,10 +177,18 @@ class ChatRepository {
 
     if (conversationId != null && conversationId.isNotEmpty) {
       body['conversation_id'] = conversationId;
+      AppLogger.debug('📎 Продолжаем чат: $conversationId');
     }
 
-    // Возвращаем StreamedResponse напрямую
-    return await _api.sendMessage(body: body);
+    // ✅ ЛОГ 3: перед отправкой
+    AppLogger.debug('🚀 Отправка запроса на сервер...');
+
+    final response = await _api.sendMessage(body: body);
+
+    // ✅ ЛОГ 4: статус ответа
+    AppLogger.debug('📥 Получен ответ: ${response.statusCode}');
+
+    return response;
   }
 
   /// @deprecated Используйте sendMessageStream() для стриминга
