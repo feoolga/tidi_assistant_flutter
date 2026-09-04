@@ -2,15 +2,24 @@
 import 'package:flutter/material.dart';
 import '../domain/models/message.dart';
 import '../theme/app_theme.dart';
+import 'typing_indicator.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
+  final bool isStreaming;
 
-  const MessageBubble({super.key, required this.message});
+  const MessageBubble({
+    super.key,
+    required this.message,
+    this.isStreaming = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final isFromUser = message.isFromUser;
+
+    final bool showTypingIndicator =
+        !isFromUser && message.text.isEmpty && isStreaming;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 16.0),
@@ -66,28 +75,34 @@ class MessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Текст сообщения
-                Text(
-                  message.text,
-                  style: TextStyle(
-                    color: isFromUser
-                        ? AppTheme.textPrimary
-                        : AppTheme.textPrimary,
-                    fontSize: 16,
-                    height: 1.4,
+                // УСЛОВНЫЙ РЕНДЕРИНГ:
+                // Если showTypingIndicator — показываем точки
+                // Иначе — показываем текст
+                if (showTypingIndicator)
+                  const TypingIndicator() // ← ИСПОЛЬЗУЕМ НОВЫЙ ВИДЖЕТ
+                else
+                  Text(
+                    message.text,
+                    style: TextStyle(
+                      color: isFromUser
+                          ? AppTheme.textPrimary
+                          : AppTheme.textPrimary,
+                      fontSize: 16,
+                      height: 1.4,
+                    ),
                   ),
-                ),
                 const SizedBox(height: 4),
-                // Время
-                Text(
-                  _formatTime(message.timestamp),
-                  style: TextStyle(
-                    color: isFromUser
-                        ? AppTheme.textSecondary.withValues(alpha: 0.7)
-                        : AppTheme.textSecondary.withValues(alpha: 0.5),
-                    fontSize: 10,
+                // Время показываем только если есть текст
+                if (!showTypingIndicator)
+                  Text(
+                    _formatTime(message.timestamp),
+                    style: TextStyle(
+                      color: isFromUser
+                          ? AppTheme.textSecondary.withValues(alpha: 0.7)
+                          : AppTheme.textSecondary.withValues(alpha: 0.5),
+                      fontSize: 10,
+                    ),
                   ),
-                ),
               ],
             ),
           ),

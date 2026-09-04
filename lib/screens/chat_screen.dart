@@ -179,7 +179,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     itemBuilder: (context, index) {
                       final reversedIndex = messages.length - 1 - index;
                       final message = messages[reversedIndex];
-                      return MessageBubble(message: message);
+
+                      final bool isStreamingForThisMessage =
+                          chatState.isStreaming &&
+                          !message.isFromUser &&
+                          reversedIndex == 0; // Только последнее сообщение
+
+                      return MessageBubble(
+                        message: message,
+                        isStreaming: isStreamingForThisMessage,
+                      );
                     },
                   ),
           ),
