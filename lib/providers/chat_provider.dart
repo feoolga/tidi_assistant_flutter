@@ -144,48 +144,139 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
 
     _clearError();
+
+    // 1. Добавляем сообщение пользователя
     _addMessage(Message.fromUser(text: text));
     _setLoading(true);
     _setStreaming(true);
 
+    // 2. Создаём ПУСТОЕ сообщение AI
+    final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+    final aiMessage = Message(
+      id: tempId,
+      text: '',
+      isFromUser: false,
+      timestamp: DateTime.now(),
+      agentId: agentId,
+      sessionId: sessionId,
+    );
+    _addMessage(aiMessage);
+
     try {
+      // 3. Отправляем запрос и получаем поток событий
       final params = SendMessageParams(
         text: text,
         agentId: agentId,
         sessionId: sessionId,
       );
 
-      final result = await _sendMessageUseCase.execute(params);
+      final eventStream = _sendMessageUseCase.execute(params);
 
-      if (result.agentId != null) {
-        _setCurrentAgent(result.agentId);
-        AppLogger.info('Агент определён: ${result.agentId}');
-      }
+      // 4. Переменные для сбора данных
+      String fullText = '';
+      String? finalAgentId;
+      String? finalSessionId;
+      String? messageId;
+      bool isCompleted = false;
 
-      final aiMessage = Message.fromAI(
-        text: result.text,
-        agentId: result.agentId,
-        sessionId: result.sessionId,
-      );
-      _addMessage(aiMessage);
+      // 5. Обрабатываем каждое событие в потоке
+      await for (final event in eventStream) {
+        if (event.type == 'delta') {
+          // Обновляем текст
+          fullText = event.data['text'] as String? ?? '';
 
-      if (result.agentId != null && result.sessionId != null) {
-        final currentAgentId = agentId;
-        final currentSessionId = sessionId;
+          // Обновляем последнее сообщение (оно AI)
+          final currentMessages = state.messages;
+          if (currentMessages.isNotEmpty) {
+            final lastIndex = currentMessages.length - 1;
+            final lastMessage = currentMessages[lastIndex];
 
-        if (currentAgentId != result.agentId ||
-            currentSessionId != result.sessionId) {
-          AppLogger.info(
-            'Сессия изменилась: агент=$currentAgentId→${result.agentId}, чат=$currentSessionId→${result.sessionId}',
-          );
+            // Проверяем, что последнее сообщение — это AI (не пользователь)
+            if (!lastMessage.isFromUser) {
+              final updatedMessage = lastMessage.copyWith(text: fullText);
 
-          onSessionChanged?.call(result.agentId!, result.sessionId!);
+              // Заменяем последнее сообщение на обновлённое
+              final newMessages = List<Message>.from(currentMessages);
+              newMessages[lastIndex] = updatedMessage;
+
+              state = state.copyWith(messages: newMessages);
+            }
+          }
+        } else if (event.type == 'completed') {
+          // Сохраняем метаданные
+          finalAgentId = event.data['agentId'] as String?;
+          finalSessionId = event.data['conversationId'] as String?;
+          messageId = event.data['messageId'] as String?;
+
+          // Обновляем текущего агента и сессию
+          if (finalAgentId != null) {
+            _setCurrentAgent(finalAgentId);
+          }
+          if (finalSessionId != null) {
+            _setCurrentConversationId(finalSessionId);
+          }
+
+          // Обновляем последнее сообщение с финальными данными
+          final currentMessages = state.messages;
+          if (currentMessages.isNotEmpty) {
+            final lastIndex = currentMessages.length - 1;
+            final lastMessage = currentMessages[lastIndex];
+
+            if (!lastMessage.isFromUser) {
+              final updatedMessage = lastMessage.copyWith(
+                id: messageId ?? lastMessage.id,
+                agentId: finalAgentId ?? lastMessage.agentId,
+                sessionId: finalSessionId ?? lastMessage.sessionId,
+              );
+
+              final newMessages = List<Message>.from(currentMessages);
+              newMessages[lastIndex] = updatedMessage;
+              state = state.copyWith(messages: newMessages);
+            }
+          }
+
+          // Если сессия изменилась — уведомляем
+          if (finalAgentId != null && finalSessionId != null) {
+            final currentAgentId = agentId;
+            final currentSessionId = sessionId;
+
+            if (currentAgentId != finalAgentId ||
+                currentSessionId != finalSessionId) {
+              AppLogger.info(
+                'Сессия изменилась: агент=$currentAgentId→$finalAgentId, чат=$currentSessionId→$finalSessionId',
+              );
+              onSessionChanged?.call(finalAgentId, finalSessionId);
+            }
+          }
+
+          isCompleted = true;
+          AppLogger.info('Сообщение отправлено успешно');
+        } else if (event.type == 'error') {
+          // Обработка ошибки
+          final errorMessage =
+              event.data['error'] as String? ?? 'Неизвестная ошибка';
+          throw Exception(errorMessage);
         }
       }
 
-      AppLogger.info('Сообщение отправлено успешно');
+      // Если поток завершился без completed — считаем это ошибкой
+      if (!isCompleted) {
+        throw Exception('Поток завершился без финального события');
+      }
     } catch (e) {
       AppLogger.error('Ошибка в sendMessage', e);
+
+      // Удаляем пустое сообщение AI, если оно есть
+      final currentMessages = state.messages;
+      if (currentMessages.isNotEmpty) {
+        final lastMessage = currentMessages.last;
+        if (!lastMessage.isFromUser && lastMessage.text.isEmpty) {
+          final newMessages = List<Message>.from(currentMessages);
+          newMessages.removeLast();
+          state = state.copyWith(messages: newMessages);
+        }
+      }
+
       _setError(e.toString());
     } finally {
       _setLoading(false);

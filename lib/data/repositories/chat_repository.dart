@@ -1,6 +1,7 @@
 // lib/data/repositories/chat_repository.dart
 
 import 'dart:convert';
+import 'package:http/http.dart' as http; // ← ДОБАВИТЬ ЭТУ СТРОКУ!
 import '../datasources/remote/chat_api.dart';
 import '../models/chat_response_dto.dart';
 import '../../domain/models/agent.dart';
@@ -160,138 +161,41 @@ class ChatRepository {
   // 5. РАБОТА С СООБЩЕНИЯМИ
   // ============================================================
 
-  /// Отправить сообщение и получить ответ.
+  /// Отправить сообщение и получить сырой SSE-поток.
+  Future<http.StreamedResponse> sendMessageStream({
+    required String text,
+    String? conversationId,
+    String? agentId,
+  }) async {
+    AppLogger.info('Отправка стрим-запроса: "$text"');
+
+    final Map<String, dynamic> body = {
+      'model': agentId ?? 'auto',
+      'input': text,
+      'stream': true,
+    };
+
+    if (conversationId != null && conversationId.isNotEmpty) {
+      body['conversation_id'] = conversationId;
+    }
+
+    // Возвращаем StreamedResponse напрямую
+    return await _api.sendMessage(body: body);
+  }
+
+  /// @deprecated Используйте sendMessageStream() для стриминга
+  @Deprecated('Используйте sendMessageStream() для стриминга')
   Future<ChatResponseDto> sendMessage({
     required String text,
     String? conversationId,
     String? agentId,
   }) async {
-    try {
-      AppLogger.info('Отправка сообщения: "$text"');
+    // Этот метод больше не используется в новом коде.
+    // Оставлен для совместимости со старыми частями приложения.
+    AppLogger.warning('sendMessage() устарел, используйте sendMessageStream()');
 
-      final Map<String, dynamic> body = {
-        'model': agentId ?? 'auto',
-        'input': text, // ← только строка, НЕ массив!
-        'stream': true,
-      };
-
-      if (conversationId != null && conversationId.isNotEmpty) {
-        body['conversation_id'] = conversationId;
-        AppLogger.info('Продолжаем чат: $conversationId');
-      }
-
-      final response = await _api.sendMessage(body: body);
-
-      if (response.statusCode != 200) {
-        final errorBody = await response.stream.bytesToString();
-        AppLogger.error('Ошибка сервера: ${response.statusCode} - $errorBody');
-        throw Exception('Ошибка сервера: ${response.statusCode}');
-      }
-
-      return await _parseSseStream(response.stream);
-    } catch (e) {
-      AppLogger.error('Ошибка при отправке сообщения', e);
-      throw Exception('Ошибка при отправке сообщения: $e');
-    }
-  }
-
-  /// Парсит SSE-поток в формате Responses API.
-  ///
-  /// Responses API присылает события в виде:
-  ///   event: response.created
-  ///   data: {"id": "...", "model": "...", "conversation_id": "..."}
-  ///
-  ///   event: response.output_text.delta
-  ///   data: {"delta": "текст"}
-  ///
-  ///   event: response.completed
-  ///   data: {"status": "completed", "usage": {...}}
-  ///
-  /// Возвращает ChatResponseDto с полным текстом и метаданными.
-  Future<ChatResponseDto> _parseSseStream(Stream<List<int>> stream) async {
-    var dto = ChatResponseDto.empty();
-    String buffer = '';
-    String? currentEventType;
-    bool firstDelta = true;
-
-    AppLogger.debug('Начинаем парсинг SSE-потока (Responses API)');
-
-    await for (final chunk in stream) {
-      buffer += utf8.decode(chunk, allowMalformed: true);
-      final lines = buffer.split('\n');
-      buffer = lines.last;
-
-      for (int i = 0; i < lines.length - 1; i++) {
-        final line = lines[i].trim();
-        if (line.isEmpty) continue;
-
-        if (line.startsWith('event: ')) {
-          currentEventType = line.substring(7).trim();
-          continue;
-        }
-
-        if (line.startsWith('data: ')) {
-          final data = line.substring(6).trim();
-          if (data.isEmpty) continue;
-
-          try {
-            final json = jsonDecode(data) as Map<String, dynamic>;
-
-            if (currentEventType == 'response.created') {
-              final id = json['id'] as String? ?? '';
-              final conversationId = json['conversation_id'] as String?;
-              dto = dto.copyWith(id: id, conversationId: conversationId);
-              AppLogger.info('Ответ создан: id=$id');
-            } else if (currentEventType == 'response.in_progress') {
-              // 🔥 БЕРЁМ model и conversation_id ОТСЮДА
-              final response = json['response'] as Map<String, dynamic>?;
-              if (response != null) {
-                final model = response['model'] as String? ?? 'auto';
-                final conversationId = response['conversation_id'] as String?;
-                dto = dto.copyWith(
-                  model: model,
-                  conversationId: conversationId ?? dto.conversationId,
-                );
-                AppLogger.info('Агент: $model, чат: $conversationId');
-              }
-            } else if (currentEventType == 'response.output_text.delta') {
-              final delta = json['delta'] as String? ?? '';
-              if (delta.isNotEmpty) {
-                if (firstDelta) {
-                  AppLogger.debug('Начало генерации ответа...');
-                  firstDelta = false;
-                }
-                dto = dto.copyWith(content: dto.content + delta);
-              }
-            } else if (currentEventType == 'response.completed') {
-              AppLogger.info('Поток завершён');
-
-              // Заменяем "Источники:" на "Проанализированные источники:"
-              String finalText = dto.content.trim();
-              const String oldText = '\n\nИсточники:\n';
-              const String newText = '\n\nПроанализированные источники:\n';
-              if (finalText.contains(oldText)) {
-                finalText = finalText.replaceAll(oldText, newText);
-              }
-
-              return ChatResponseDto(
-                id: dto.id,
-                model: dto.model, // теперь здесь будет "epoz", а не "auto"
-                conversationId: dto.conversationId,
-                content: finalText,
-              );
-            }
-            // Неизвестные события — игнорируем без логов
-          } catch (e) {
-            AppLogger.warning('Ошибка парсинга JSON: $e');
-            continue;
-          }
-        }
-      }
-    }
-
-    // Если поток завершился без response.completed
-    AppLogger.warning('Поток завершился без response.completed');
-    return dto;
+    // Возвращаем заглушку, чтобы код компилировался
+    // TODO: удалить этот метод после полного перехода на стриминг
+    return ChatResponseDto(id: '', model: '', conversationId: '', content: '');
   }
 }
