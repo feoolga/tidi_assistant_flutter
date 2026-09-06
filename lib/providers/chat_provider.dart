@@ -7,6 +7,8 @@ import '../domain/usecases/send_message_usecase.dart';
 import 'session_provider.dart';
 import 'agent_provider.dart';
 import '../data/repositories/chat_repository.dart';
+import '../core/errors/error_handler.dart';
+import '../core/errors/business_exceptions.dart';
 
 // ============================================================
 // 1. СОСТОЯНИЕ ЧАТА
@@ -268,19 +270,23 @@ class ChatNotifier extends StateNotifier<ChatState> {
           final errorMessage =
               event.data['error'] as String? ?? 'Неизвестная ошибка';
 
-          // ✅ ЛОГ: ошибка в потоке
           AppLogger.error('❌ Ошибка в потоке: $errorMessage');
 
-          throw Exception(errorMessage);
+          // 👇 Бросаем BusinessException с понятным сообщением
+          throw BusinessException.streamError(errorMessage);
         }
       }
 
       // Если поток завершился без completed — считаем это ошибкой
       if (!isCompleted) {
-        throw Exception('Поток завершился без финального события');
+        throw BusinessException.streamError(
+          'Поток завершился без финального события',
+        );
       }
     } catch (e) {
-      AppLogger.error('Ошибка в sendMessage', e);
+      // 👇 Используем ErrorHandler для преобразования ошибки
+      final appException = ErrorHandler.handle(e);
+      AppLogger.logException('Ошибка в sendMessage', appException);
 
       // Удаляем пустое сообщение AI, если оно есть
       final currentMessages = state.messages;
@@ -293,10 +299,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
       }
 
-      _setError(e.toString());
+      // 👇 Показываем пользователю понятное сообщение
+      _setError(appException.userMessage);
     } finally {
       AppLogger.debug('🏁 Завершение обработки сообщения');
-
       _setLoading(false);
       _setStreaming(false);
     }
@@ -319,8 +325,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       AppLogger.info('Загружено сообщений: ${messages.length}');
     } catch (e) {
-      AppLogger.error('Ошибка в loadChat', e);
-      _setError(e.toString());
+      // 👇 Используем ErrorHandler для преобразования ошибки
+      final appException = ErrorHandler.handle(e);
+      AppLogger.logException('Ошибка в loadChat', appException);
+      // 👇 Показываем пользователю понятное сообщение
+      _setError(appException.userMessage);
     } finally {
       _setLoading(false);
     }
