@@ -8,6 +8,8 @@ import '../../domain/models/agent.dart';
 import '../../domain/models/chat_session.dart';
 import '../../domain/models/message.dart';
 import '../../core/logger/app_logger.dart';
+import '../../core/errors/error_handler.dart';
+import '../../core/errors/server_exceptions.dart';
 
 /// Репозиторий для работы с чатом.
 ///
@@ -45,7 +47,11 @@ class ChatRepository {
       // 2. Проверяем статус
       if (response.statusCode != 200) {
         AppLogger.error('Ошибка загрузки агентов: ${response.statusCode}');
-        throw Exception('Ошибка загрузки агентов: ${response.statusCode}');
+        // 👇 Бросаем ServerException с правильным статусом
+        throw ServerException.clientError(
+          statusCode: response.statusCode,
+          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
+        );
       }
 
       // 3. Парсим JSON
@@ -63,7 +69,8 @@ class ChatRepository {
       return agents;
     } catch (e) {
       AppLogger.error('Не удалось загрузить агентов', e);
-      throw Exception('Не удалось загрузить агентов: $e');
+      // 👇 ErrorHandler превратит любую ошибку в AppException
+      throw ErrorHandler.handle(e);
     }
   }
 
@@ -85,7 +92,11 @@ class ChatRepository {
 
       if (response.statusCode != 200 && response.statusCode != 201) {
         AppLogger.error('Ошибка создания чата: ${response.statusCode}');
-        throw Exception('Ошибка создания чата: ${response.statusCode}');
+        // 👇 Бросаем ServerException
+        throw ServerException.clientError(
+          statusCode: response.statusCode,
+          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
+        );
       }
 
       final Map<String, dynamic> data = jsonDecode(response.body);
@@ -94,7 +105,8 @@ class ChatRepository {
       return session;
     } catch (e) {
       AppLogger.error('Не удалось создать чат для агента $agentId', e);
-      throw Exception('Не удалось создать чат: $e');
+      // 👇 Используем ErrorHandler
+      throw ErrorHandler.handle(e);
     }
   }
 
@@ -110,7 +122,11 @@ class ChatRepository {
 
       if (response.statusCode != 200) {
         AppLogger.error('Ошибка загрузки чатов: ${response.statusCode}');
-        throw Exception('Ошибка загрузки чатов: ${response.statusCode}');
+        // 👇 Бросаем ServerException
+        throw ServerException.clientError(
+          statusCode: response.statusCode,
+          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
+        );
       }
 
       final List<dynamic> data = jsonDecode(response.body);
@@ -121,7 +137,7 @@ class ChatRepository {
       return chats;
     } catch (e) {
       AppLogger.warning('Не удалось загрузить чаты для агента $agentId: $e');
-      return [];
+      return []; // 👈 Оставляем — возвращаем пустой список
     }
   }
 
@@ -139,7 +155,11 @@ class ChatRepository {
 
       if (response.statusCode != 200) {
         AppLogger.error('Ошибка загрузки сообщений: ${response.statusCode}');
-        throw Exception('Ошибка загрузки сообщений: ${response.statusCode}');
+        // 👇 Бросаем ServerException
+        throw ServerException.clientError(
+          statusCode: response.statusCode,
+          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
+        );
       }
 
       final List<dynamic> data = jsonDecode(response.body);
@@ -153,7 +173,8 @@ class ChatRepository {
       return messages;
     } catch (e) {
       AppLogger.error('Не удалось загрузить сообщения чата $conversationId', e);
-      throw Exception('Не удалось загрузить сообщения: $e');
+      // 👇 Используем ErrorHandler
+      throw ErrorHandler.handle(e);
     }
   }
 
@@ -183,27 +204,20 @@ class ChatRepository {
     // ✅ ЛОГ 3: перед отправкой
     AppLogger.debug('🚀 Отправка запроса на сервер...');
 
-    final response = await _api.sendMessage(body: body);
+    // 👇 Оборачиваем в try-catch для преобразования ошибок
+    try {
+      final response = await _api.sendMessage(body: body);
+      AppLogger.debug('📥 Получен ответ: ${response.statusCode}');
 
-    // ✅ ЛОГ 4: статус ответа
-    AppLogger.debug('📥 Получен ответ: ${response.statusCode}');
+      // 👇 Проверяем статус ответа
+      if (response.statusCode != 200) {
+        throw ServerException.clientError(statusCode: response.statusCode);
+      }
 
-    return response;
-  }
-
-  /// @deprecated Используйте sendMessageStream() для стриминга
-  @Deprecated('Используйте sendMessageStream() для стриминга')
-  Future<ChatResponseDto> sendMessage({
-    required String text,
-    String? conversationId,
-    String? agentId,
-  }) async {
-    // Этот метод больше не используется в новом коде.
-    // Оставлен для совместимости со старыми частями приложения.
-    AppLogger.warning('sendMessage() устарел, используйте sendMessageStream()');
-
-    // Возвращаем заглушку, чтобы код компилировался
-    // TODO: удалить этот метод после полного перехода на стриминг
-    return ChatResponseDto(id: '', model: '', conversationId: '', content: '');
+      return response;
+    } catch (e) {
+      AppLogger.error('Ошибка при отправке стрим-запроса', e);
+      throw ErrorHandler.handle(e);
+    }
   }
 }
