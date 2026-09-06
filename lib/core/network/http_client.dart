@@ -5,6 +5,8 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import '../logger/app_logger.dart';
+import '../errors/error_handler.dart';
+import '../errors/network_exceptions.dart';
 
 /// Единый HTTP клиент для всех запросов к API.
 ///
@@ -59,14 +61,14 @@ class AppHttpClient {
       return response;
     } on TimeoutException {
       AppLogger.error('Таймаут при выполнении GET-запроса: $path');
-      throw Exception('Превышено время ожидания ответа от сервера');
+      throw NetworkException.timeout();
     } catch (e, stackTrace) {
       AppLogger.error(
         'Ошибка при выполнении GET-запроса: $path',
         e,
         stackTrace,
       );
-      throw Exception('Ошибка при выполнении GET-запроса: $e');
+      throw ErrorHandler.handle(e);
     }
   }
 
@@ -102,10 +104,10 @@ class AppHttpClient {
       return response;
     } on TimeoutException {
       AppLogger.error('Таймаут при выполнении POST-запроса: $path');
-      throw Exception('Превышено время ожидания ответа от сервера');
+      throw NetworkException.timeout();
     } catch (e) {
       AppLogger.error('Ошибка при выполнении POST-запроса: $path', e);
-      throw Exception('Ошибка при выполнении POST-запроса: $e');
+      throw ErrorHandler.handle(e);
     }
   }
 
@@ -144,10 +146,10 @@ class AppHttpClient {
       return response;
     } on TimeoutException {
       AppLogger.error('Таймаут при выполнении POST-запроса (stream): $path');
-      throw Exception('Превышено время ожидания ответа от сервера');
+      throw NetworkException.timeout();
     } catch (e) {
       AppLogger.error('Ошибка при выполнении POST-запроса (stream): $path', e);
-      throw Exception('Ошибка при выполнении POST-запроса (stream): $e');
+      throw ErrorHandler.handle(e);
     }
   }
 
@@ -174,10 +176,10 @@ class AppHttpClient {
       return response;
     } on TimeoutException {
       AppLogger.error('Таймаут при выполнении PATCH-запроса: $path');
-      throw Exception('Превышено время ожидания ответа от сервера');
+      throw NetworkException.timeout();
     } catch (e) {
       AppLogger.error('Ошибка при выполнении PATCH-запроса: $path', e);
-      throw Exception('Ошибка при выполнении PATCH-запроса: $e');
+      throw ErrorHandler.handle(e);
     }
   }
 
@@ -202,10 +204,10 @@ class AppHttpClient {
       return response;
     } on TimeoutException {
       AppLogger.error('Таймаут при выполнении DELETE-запроса: $path');
-      throw Exception('Превышено время ожидания ответа от сервера');
+      throw NetworkException.timeout();
     } catch (e) {
       AppLogger.error('Ошибка при выполнении DELETE-запроса: $path', e);
-      throw Exception('Ошибка при выполнении DELETE-запроса: $e');
+      throw ErrorHandler.handle(e);
     }
   }
 
