@@ -4,6 +4,8 @@ import 'dart:async';
 import '../../data/repositories/chat_repository.dart';
 import '../../core/logger/app_logger.dart';
 import '../../core/network/sse_parser.dart';
+import '../../core/errors/error_handler.dart';
+import '../../core/errors/business_exceptions.dart';
 
 /// Событие в процессе стриминга ответа.
 class StreamEvent {
@@ -195,15 +197,24 @@ class SendMessageUseCase {
       controller.add(
         StreamEvent(
           type: 'error',
-          data: {'error': 'Поток завершился без финального события'},
+          data: {
+            'error': BusinessException.streamError(
+              'Поток завершился без финального события',
+            ).userMessage,
+          },
         ),
       );
       controller.close();
-    } catch (error) {
-      // Обработка ошибок
-      AppLogger.error('Ошибка в SSE-потоке', error);
+    } catch (error, stackTrace) {
+      // 👇 Используем ErrorHandler для преобразования ошибки
+      final appException = ErrorHandler.handle(error);
+
+      // 👇 Профессиональное логирование
+      AppLogger.logException('Ошибка в SSE-потоке', appException, stackTrace);
+
+      // 👇 Отправляем пользовательское сообщение
       controller.add(
-        StreamEvent(type: 'error', data: {'error': error.toString()}),
+        StreamEvent(type: 'error', data: {'error': appException.userMessage}),
       );
       controller.close();
     }
