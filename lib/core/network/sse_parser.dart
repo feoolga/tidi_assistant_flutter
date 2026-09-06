@@ -3,13 +3,15 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:http/http.dart' as http;
+import '../errors/server_exceptions.dart';
 
 /// Парсер Server-Sent Events (SSE) потока.
 class SseParser {
   /// Парсит SSE-поток
   static Stream<Map<String, dynamic>> parse(http.StreamedResponse response) {
     if (response.statusCode != 200) {
-      throw Exception('Ошибка сервера: ${response.statusCode}');
+      // 👇 Бросаем ServerException с правильным статусом
+      throw ServerException.clientError(statusCode: response.statusCode);
     }
 
     // 1. Преобразуем поток байтов в поток строк
@@ -64,7 +66,8 @@ class SseParser {
         // --- Игнорируем другие строки (комментарии, пустые и т.д.) ---
       },
       onError: (error) {
-        controller.addError('Ошибка в SSE-потоке: $error');
+        // 👇 Добавляем ошибку как есть (она будет преобразована выше по стеку)
+        controller.addError(error);
         controller.close();
       },
       onDone: () {
