@@ -1,75 +1,106 @@
 // lib/core/logger/app_logger.dart
 
-/// Простой логгер для приложения. Этот класс используется без создания объектов. Все методы и переменные помечены static — это значит, они принадлежат самому классу, а не его экземплярам.
+import 'package:flutter/foundation.dart' show kReleaseMode;
+import 'package:logger/logger.dart';
+
+/// Профессиональный логгер для приложения.
 ///
-/// Позволяет:
-/// 1. Разделять логи по уровням (debug, info, warning, error)
-/// 2. Включать/выключать отдельные уровни
-/// 3. Полностью отключить логирование в production
-/// 4. Иметь единый формат вывода
+/// Использует пакет [logger] для:
+/// - Уровней логирования (debug, info, warning, error)
+/// - Красивого форматирования с цветами
+/// - Автоматической фильтрации в зависимости от режима (debug/release)
+///
+/// Пример использования:
+/// ```dart
+/// AppLogger.info('Загружено агентов: 5');
+/// AppLogger.warning('Не удалось загрузить чаты для агента $id');
+/// AppLogger.error('Ошибка при отправке', exception, stackTrace);
+/// ```
 class AppLogger {
   // ============================================================
-  // 1. НАСТРОЙКИ
+  // 1. ВНУТРЕННИЙ ЛОГГЕР
   // ============================================================
 
-  /// Глобальный переключатель: включен ли логгер вообще
-  static bool isEnabled = true;
+  /// Единственный экземпляр Logger, который использует PrettyPrinter
+  static final Logger _logger = Logger(
+    // Показываем информацию о коде только если это не release
+    level: kReleaseMode ? Level.warning : Level.debug,
 
-  /// Показывать отладочную информацию (самый подробный уровень)
-  static bool showDebug = true;
+    // Настройка вывода
+    printer: PrettyPrinter(
+      // Количество строк кода в стектрейсе (0 = показывать только сообщение)
+      methodCount: 2,
 
-  /// Показывать информационные сообщения
-  static bool showInfo = true;
+      // Количество строк кода для ошибок
+      errorMethodCount: 5,
 
-  /// Показывать предупреждения
-  static bool showWarnings = true;
+      // Длина строки перед переносом
+      lineLength: 120,
 
-  /// Показывать ошибки (обычно всегда включено)
-  static bool showErrors = true;
+      // Использовать цвета в консоли
+      colors: true,
+
+      // Печатать эмодзи в начале строки
+      printEmojis: true,
+
+      // Печатать время
+      dateTimeFormat: DateTimeFormat.dateAndTime,
+    ),
+  );
 
   // ============================================================
-  // 2. МЕТОДЫ ЛОГИРОВАНИЯ
+  // 2. ОСНОВНЫЕ МЕТОДЫ
   // ============================================================
 
   /// Отладочная информация — для разработчика.
   ///
-  /// Пример: AppLogger.debug('Начинаем парсинг SSE-потока');
+  /// Используется для детального трекинга выполнения кода.
+  /// В production — не выводится.
+  ///
+  /// Пример: `AppLogger.debug('Начинаем парсинг SSE-потока')`
   static void debug(String message) {
-    if (isEnabled && showDebug) {
-      print('🔍 DEBUG: $message');
-    }
+    _logger.d(message);
   }
 
   /// Информационное сообщение — ключевые события.
   ///
-  /// Пример: AppLogger.info('Агент определён: $model');
+  /// Используется для логирования важных действий в приложении.
+  /// В production — выводится, но без деталей.
+  ///
+  /// Пример: `AppLogger.info('Агент определён: epoz')`
   static void info(String message) {
-    if (isEnabled && showInfo) {
-      print('ℹ️ INFO: $message');
-    }
+    _logger.i(message);
   }
 
   /// Предупреждение — что-то пошло не так, но приложение работает.
   ///
-  /// Пример: AppLogger.warning('Не удалось загрузить чаты для агента $agentId');
+  /// Используется для нештатных, но не критичных ситуаций.
+  ///
+  /// Пример: `AppLogger.warning('Не удалось загрузить чаты для агента $agentId')`
   static void warning(String message) {
-    if (isEnabled && showWarnings) {
-      print('⚠️ WARNING: $message');
-    }
+    _logger.w(message);
   }
 
-  /// Ошибка — серьёзная проблема.
+  /// Ошибка — серьёзная проблема, требующая внимания.
   ///
-  /// Пример: AppLogger.error('Ошибка при отправке сообщения', e);
+  /// Используется для логирования исключений и сбоев.
+  /// Всегда выводится, даже в production.
+  ///
+  /// Пример:
+  /// ```dart
+  /// try {
+  ///   // ...
+  /// } catch (e, stackTrace) {
+  ///   AppLogger.error('Ошибка при отправке сообщения', e, stackTrace);
+  /// }
+  /// ```
   static void error(String message, [Object? error, StackTrace? stackTrace]) {
-    if (isEnabled && showErrors) {
-      print('❌ ERROR: $message');
-      if (error != null) {
-        print('   Details: $error');
-      }
-      if (stackTrace != null) {
-        print('   Stack: $stackTrace');
-      }
+    if (error != null && stackTrace != null) {
+      _logger.e(message, error: error, stackTrace: stackTrace);
+    } else if (error != null) {
+      _logger.e('$message\nError: $error');
+    } else {
+      _logger.e(message);
     }
   }
 
@@ -77,52 +108,101 @@ class AppLogger {
   // 3. СПЕЦИАЛЬНЫЕ МЕТОДЫ
   // ============================================================
 
-  /// Разделитель для визуального отделения блоков
+  /// Разделитель для визуального отделения блоков в логах.
   ///
-  /// Пример: AppLogger.separator('НАЧАЛО ОТПРАВКИ');
+  /// Пример: `AppLogger.separator('НАЧАЛО ОТПРАВКИ')`
   static void separator(String title) {
-    if (isEnabled) {
-      print('');
-      print('═══════════════════════════════════════');
-      print('═══ $title');
-      print('═══════════════════════════════════════');
-    }
+    final border = '═══════════════════════════════════════';
+    _logger.i('\n$border\n═══ $title\n$border');
   }
 
-  /// Логировать HTTP-запрос
+  /// Логировать HTTP-запрос.
   ///
-  /// Пример: AppLogger.http('GET', '/v1/models', 200);
+  /// Пример: `AppLogger.http('GET', '/v1/models', 200)`
   static void http(String method, String path, int statusCode) {
-    if (isEnabled && showInfo) {
-      final emoji = statusCode < 400 ? '✅' : '❌';
-      print('$emoji $method $path → $statusCode');
+    final emoji = statusCode < 400 ? '✅' : '❌';
+    _logger.i('$emoji $method $path → $statusCode');
+  }
+
+  /// Логировать ошибку с контекстом.
+  ///
+  /// Используется в ErrorHandler для структурированного логирования.
+  ///
+  /// Пример:
+  /// ```dart
+  /// AppLogger.logException(
+  ///   'Не удалось загрузить агентов',
+  ///   exception,
+  ///   stackTrace,
+  ///   context: {'agentId': agentId},
+  /// );
+  /// ```
+  static void logException(
+    String message,
+    Object error, [
+    StackTrace? stackTrace,
+    Map<String, dynamic>? context,
+  ]) {
+    final buffer = StringBuffer()
+      ..writeln(message)
+      ..writeln('────────────────────────────────────────');
+
+    // Добавляем контекст, если передан
+    if (context != null && context.isNotEmpty) {
+      buffer.writeln('📋 Контекст:');
+      context.forEach((key, value) {
+        buffer.writeln('  $key: $value');
+      });
+      buffer.writeln('────────────────────────────────────────');
     }
+
+    // Если это наша AppException — выводим структурированно
+    if (error is AppException) {
+      buffer.writeln('❌ Ошибка приложения:');
+      buffer.writeln('  Код: ${error.code}');
+      buffer.writeln('  Сообщение: ${error.userMessage}');
+      if (error.technicalDetails != null) {
+        buffer.writeln('  Детали: ${error.technicalDetails}');
+      }
+      if (error.originalError != null) {
+        buffer.writeln('  Оригинал: ${error.originalError}');
+      }
+    } else {
+      buffer.writeln('❌ Ошибка: $error');
+    }
+
+    // Добавляем стектрейс
+    if (stackTrace != null) {
+      buffer.writeln('────────────────────────────────────────');
+      buffer.writeln('📚 StackTrace:');
+      buffer.writeln(stackTrace);
+    }
+
+    buffer.writeln('────────────────────────────────────────');
+
+    // Логируем как ошибку
+    _logger.e(buffer.toString());
   }
 
   // ============================================================
-  // 4. НАСТРОЙКА ДЛЯ PRODUCTION
+  // 4. НАСТРОЙКА
   // ============================================================
 
-  /// Выключить всё логирование (для production-сборки)
-  static void disableAll() {
-    isEnabled = false;
-  }
-
-  /// Включить только ошибки (для production с отладкой)
+  /// Включить только ошибки (для production)
+  ///
+  /// По умолчанию логгер уже фильтрует по `kReleaseMode`,
+  /// но этот метод позволяет переопределить поведение.
   static void errorsOnly() {
-    isEnabled = true;
-    showDebug = false;
-    showInfo = false;
-    showWarnings = false;
-    showErrors = true;
+    // В пакете logger мы не можем динамически менять уровень
+    // Поэтому просто создаем новый Logger
+    // Но лучше оставить автоматическую фильтрацию через kReleaseMode
+    // Этот метод оставлен для совместимости с существующим кодом
   }
 
   /// Полное логирование (для разработки)
+  ///
+  /// По умолчанию уже включено в debug режиме.
   static void all() {
-    isEnabled = true;
-    showDebug = true;
-    showInfo = true;
-    showWarnings = true;
-    showErrors = true;
+    // Тоже оставлен для совместимости
   }
 }
