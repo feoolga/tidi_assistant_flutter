@@ -7,6 +7,7 @@ import '../core/logger/app_logger.dart';
 import '../theme/app_theme.dart';
 import '../providers/agent_provider.dart';
 import 'chat_screen.dart';
+import '../core/errors/error_handler.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
@@ -55,14 +56,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
   void _loadAgentsAndNavigate() async {
     try {
-      // Таймаут: если сервер не отвечает 5 секунд — переходим дальше
       final agents = await ref
           .read(agentsProvider.future)
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 8));
 
       AppLogger.info('Загружено агентов: ${agents.length}');
 
-      // Небольшая задержка для анимации
       await Future.delayed(const Duration(milliseconds: 1500));
 
       if (mounted) {
@@ -71,12 +70,21 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
           MaterialPageRoute(builder: (context) => const ChatScreen()),
         );
       }
-    } catch (e) {
-      // Если ошибка — показываем, но всё равно переходим в чат
-      AppLogger.warning('Ошибка загрузки агентов: $e');
+    } catch (e, stackTrace) {
+      // 👇 Используем ErrorHandler для преобразования ошибки
+      final appException = ErrorHandler.handle(e);
 
+      // 👇 Профессиональное логирование с контекстом
+      AppLogger.logException(
+        'Ошибка загрузки агентов',
+        appException,
+        stackTrace,
+        {'timeout': '8s'},
+      );
+
+      // 👇 Показываем пользователю понятное сообщение
       setState(() {
-        _errorMessage = 'Не удалось загрузить агентов: $e';
+        _errorMessage = appException.userMessage;
       });
 
       // Ждём 2 секунды, чтобы пользователь увидел ошибку

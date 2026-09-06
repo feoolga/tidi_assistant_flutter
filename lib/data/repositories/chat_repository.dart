@@ -3,7 +3,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http; // ← ДОБАВИТЬ ЭТУ СТРОКУ!
 import '../datasources/remote/chat_api.dart';
-import '../models/chat_response_dto.dart';
 import '../../domain/models/agent.dart';
 import '../../domain/models/chat_session.dart';
 import '../../domain/models/message.dart';
