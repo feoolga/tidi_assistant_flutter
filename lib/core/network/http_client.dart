@@ -60,8 +60,12 @@ class AppHttpClient {
     } on TimeoutException {
       AppLogger.error('Таймаут при выполнении GET-запроса: $path');
       throw Exception('Превышено время ожидания ответа от сервера');
-    } catch (e) {
-      AppLogger.error('Ошибка при выполнении GET-запроса: $path', e);
+    } catch (e, stackTrace) {
+      AppLogger.error(
+        'Ошибка при выполнении GET-запроса: $path',
+        e,
+        stackTrace,
+      );
       throw Exception('Ошибка при выполнении GET-запроса: $e');
     }
   }
