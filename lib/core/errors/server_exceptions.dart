@@ -23,12 +23,20 @@ class ServerException extends AppException {
     Object? error,
   }) {
     String userMessage = 'Ошибка запроса.';
-    if (statusCode == 400)
+
+    // 👇 Исправлено: добавили фигурные скобки для каждого if
+    if (statusCode == 400) {
       userMessage = 'Некорректный запрос. Проверьте введенные данные.';
-    if (statusCode == 401)
+    }
+    if (statusCode == 401) {
       userMessage = 'Не авторизован. Пожалуйста, войдите заново.';
-    if (statusCode == 403) userMessage = 'Доступ запрещен.';
-    if (statusCode == 404) userMessage = 'Запрашиваемый ресурс не найден.';
+    }
+    if (statusCode == 403) {
+      userMessage = 'Доступ запрещен.';
+    }
+    if (statusCode == 404) {
+      userMessage = 'Запрашиваемый ресурс не найден.';
+    }
 
     return ServerException(
       code: 'HTTP_$statusCode',

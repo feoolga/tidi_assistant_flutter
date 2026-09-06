@@ -2,6 +2,7 @@
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:logger/logger.dart';
+import '../errors/app_exception.dart';
 
 /// Профессиональный логгер для приложения.
 ///
