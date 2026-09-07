@@ -26,6 +26,10 @@ class ChatResponseDto {
   /// Полный текст ответа (собранный из всех токенов)
   final String content;
 
+  /// true — ответ еще не завершен (идет стриминг)
+  /// false — ответ завершен
+  final bool isStreaming;
+
   // ============================================================
   // 2. КОНСТРУКТОРЫ
   // ============================================================
@@ -35,6 +39,7 @@ class ChatResponseDto {
     required this.model,
     this.conversationId,
     required this.content,
+    this.isStreaming = true,
   });
 
   /// Пустой DTO для начала сборки из SSE-потока.
@@ -44,6 +49,7 @@ class ChatResponseDto {
       model: 'auto',
       conversationId: null,
       content: '',
+      isStreaming: true,
     );
   }
 
@@ -54,12 +60,14 @@ class ChatResponseDto {
     String? model,
     String? conversationId,
     String? content,
+    bool? isStreaming,
   }) {
     return ChatResponseDto(
       id: id ?? this.id,
       model: model ?? this.model,
       conversationId: conversationId ?? this.conversationId,
       content: content ?? this.content,
+      isStreaming: isStreaming ?? this.isStreaming,
     );
   }
 
