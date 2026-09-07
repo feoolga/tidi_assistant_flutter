@@ -9,6 +9,12 @@ import '../../domain/models/message.dart';
 import '../../core/logger/app_logger.dart';
 import '../../core/errors/error_handler.dart';
 import '../../core/errors/server_exceptions.dart';
+import '../models/agent_dto.dart';
+import '../models/chat_session_dto.dart';
+import '../models/message_dto.dart';
+import '../mappers/agent_mapper.dart';
+import '../mappers/chat_session_mapper.dart';
+import '../mappers/message_mapper.dart';
 
 /// Репозиторий для работы с чатом.
 ///
@@ -61,7 +67,8 @@ class ChatRepository {
       // Фильтруем "auto" — это не агент, а специальное значение для роутинга
       final agents = models
           .where((item) => item['id'] != 'auto')
-          .map((json) => Agent.fromJson(json))
+          .map((json) => AgentDto.fromJson(json))
+          .map((dto) => AgentMapper.toDomain(dto))
           .toList();
 
       AppLogger.info('Загружено агентов: ${agents.length}');
@@ -99,7 +106,9 @@ class ChatRepository {
       }
 
       final Map<String, dynamic> data = jsonDecode(response.body);
-      final session = ChatSession.fromJson(data, agentId);
+      final sessionDto = ChatSessionDto.fromJson(data);
+      final session = ChatSessionMapper.toDomain(sessionDto, agentId);
+
       AppLogger.info('Чат создан: ${session.id}');
       return session;
     } catch (e) {
@@ -130,7 +139,8 @@ class ChatRepository {
 
       final List<dynamic> data = jsonDecode(response.body);
       final chats = data
-          .map((json) => ChatSession.fromJson(json, agentId))
+          .map((json) => ChatSessionDto.fromJson(json))
+          .map((dto) => ChatSessionMapper.toDomain(dto, agentId))
           .toList();
       AppLogger.debug('Загружено чатов для агента $agentId: ${chats.length}');
       return chats;
@@ -163,7 +173,8 @@ class ChatRepository {
 
       final List<dynamic> data = jsonDecode(response.body);
       final messages = data
-          .map((json) => Message.fromJson(json as Map<String, dynamic>))
+          .map((json) => MessageDto.fromJson(json as Map<String, dynamic>))
+          .map((dto) => MessageMapper.toDomain(dto))
           .toList();
 
       AppLogger.info(
