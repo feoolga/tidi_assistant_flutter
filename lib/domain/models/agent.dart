@@ -18,35 +18,6 @@ class Agent {
   });
 
   // ============================================================
-  // СТАРЫЙ ФОРМАТ (для обратной совместимости)
-  // ============================================================
-
-  factory Agent.fromJson(Map<String, dynamic> json) {
-    // Проверяем, в каком формате пришли данные
-    // Новый формат OpenAI: {"id": "...", "object": "model", ...}
-    // Старый формат: {"id": "...", "name": "...", ...}
-    
-    final String id = json['id'] as String;
-    
-    // В новом формате имя может быть в поле 'id' или 'name'
-    String name;
-    if (json.containsKey('name') && json['name'] != null) {
-      name = json['name'] as String;
-    } else {
-      name = id; // Если имени нет — используем ID
-    }
-    
-    return Agent(
-      id: id,
-      name: name,
-      description: json['description'] as String?,
-      capabilities: (json['capabilities'] as List?)?.cast<String>(),
-      routable: json['routable'] as bool? ?? true,
-      transport: json['transport'] as String?,
-    );
-  }
-
-  // ============================================================
   // ПРЕОБРАЗОВАНИЕ В JSON
   // ============================================================
 

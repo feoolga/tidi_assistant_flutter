@@ -56,60 +56,7 @@ class Message {
   });
 
   // ------------------------------------------------------------
-  // 4.1. Создание сообщения из JSON (для загрузки истории)
-  // ------------------------------------------------------------
-
-  /// Используется, когда мы получаем готовые сообщения от сервера
-  /// (например, GET /agents/{agent_id}/sessions/{session_id}/messages)
-  factory Message.fromJson(Map<String, dynamic> json) {
-    // --- Определяем автора ---
-    // Приоритет 1: поле 'role' (приходит от бэкенда)
-    // Приоритет 2: поле 'isFromUser' (используется в некоторых API)
-    // Приоритет 3: по умолчанию false (сообщение от AI)
-    bool isFromUser;
-    if (json.containsKey('role')) {
-      isFromUser = json['role'] == 'user';
-    } else if (json.containsKey('isFromUser')) {
-      isFromUser = json['isFromUser'] as bool? ?? false;
-    } else {
-      isFromUser = false;
-    }
-
-    // --- Получаем текст ---
-    // Приоритет 1: поле 'content' (стандарт бэкенда)
-    // Приоритет 2: поле 'text' (для обратной совместимости)
-    final String text =
-        json['content'] as String? ?? json['text'] as String? ?? '';
-
-    // --- Получаем время ---
-    // Приоритет 1: поле 'created_at' (стандарт бэкенда)
-    // Приоритет 2: поле 'timestamp' (для обратной совместимости)
-    final String timestampStr =
-        json['created_at'] as String? ?? json['timestamp'] as String? ?? '';
-    final DateTime timestamp = timestampStr.isNotEmpty
-        ? DateTime.parse(timestampStr)
-        : DateTime.now();
-
-    // --- Получаем ID ---
-    // Если ID нет — генерируем на основе времени
-    final String id =
-        json['id']?.toString() ??
-        DateTime.now().millisecondsSinceEpoch.toString();
-
-    return Message(
-      id: id,
-      text: text,
-      isFromUser: isFromUser,
-      timestamp: timestamp,
-      agentId: json['agentId'] as String?,
-      sessionId: json['sessionId'] as String?,
-      sources: json['sources'] as List<Map<String, dynamic>>?,
-      feedback: json['feedback'] as Map<String, dynamic>?,
-    );
-  }
-
-  // ------------------------------------------------------------
-  // 4.2. Создание сообщения из SSE-потока (НОВОЕ!)
+  // 4.1. Создание сообщения из SSE-потока (НОВОЕ!)
   // ------------------------------------------------------------
 
   /// Используется, когда мы собираем сообщение из токенов SSE-потока.
@@ -150,7 +97,7 @@ class Message {
   }
 
   // ------------------------------------------------------------
-  // 4.3. Создание сообщения пользователя (УДОБНЫЙ МЕТОД)
+  // 4.2. Создание сообщения пользователя (УДОБНЫЙ МЕТОД)
   // ------------------------------------------------------------
 
   /// Удобный конструктор для быстрого создания сообщения пользователя.
@@ -165,7 +112,7 @@ class Message {
   }
 
   // ------------------------------------------------------------
-  // 4.4. Создание сообщения AI (УДОБНЫЙ МЕТОД)
+  // 4.3. Создание сообщения AI (УДОБНЫЙ МЕТОД)
   // ------------------------------------------------------------
 
   /// Удобный конструктор для быстрого создания ответа AI.
