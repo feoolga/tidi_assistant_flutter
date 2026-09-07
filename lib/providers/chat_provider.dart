@@ -242,6 +242,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
           messageId = dto.id;
           isCompleted = true;
 
+          // ✅ ОБНОВЛЯЕМ СОСТОЯНИЕ ЧАТА (AppBar)
+          if (finalAgentId != null) {
+            _setCurrentAgent(finalAgentId);
+          }
+          if (finalSessionId != null) {
+            _setCurrentConversationId(finalSessionId);
+          }
+
           AppLogger.info('✅ Ответ получен полностью');
           AppLogger.debug('   📌 Агент: $finalAgentId');
           AppLogger.debug('   📌 Чат: $finalSessionId');
