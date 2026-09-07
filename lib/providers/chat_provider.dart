@@ -132,6 +132,48 @@ class ChatNotifier extends StateNotifier<ChatState> {
     state = state.copyWith(messages: [...state.messages, message]);
   }
 
+  /// Обновляет текст последнего сообщения AI
+  void _updateMessageText(String text) {
+    final currentMessages = state.messages;
+    if (currentMessages.isEmpty) return;
+
+    final lastIndex = currentMessages.length - 1;
+    final lastMessage = currentMessages[lastIndex];
+
+    // Проверяем, что последнее сообщение — это AI (не пользователь)
+    if (!lastMessage.isFromUser) {
+      final updatedMessage = lastMessage.copyWith(text: text);
+      final newMessages = List<Message>.from(currentMessages);
+      newMessages[lastIndex] = updatedMessage;
+      state = state.copyWith(messages: newMessages);
+    }
+  }
+
+  /// Завершает ответ — обновляет метаданные последнего сообщения AI
+  void _completeMessage({
+    required String? agentId,
+    required String? sessionId,
+    required String? messageId,
+  }) {
+    final currentMessages = state.messages;
+    if (currentMessages.isEmpty) return;
+
+    final lastIndex = currentMessages.length - 1;
+    final lastMessage = currentMessages[lastIndex];
+
+    if (!lastMessage.isFromUser) {
+      final updatedMessage = lastMessage.copyWith(
+        id: messageId ?? lastMessage.id,
+        agentId: agentId ?? lastMessage.agentId,
+        sessionId: sessionId ?? lastMessage.sessionId,
+      );
+
+      final newMessages = List<Message>.from(currentMessages);
+      newMessages[lastIndex] = updatedMessage;
+      state = state.copyWith(messages: newMessages);
+    }
+  }
+
   void _setMessages(List<Message> messages) {
     state = state.copyWith(messages: messages);
   }
@@ -166,7 +208,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _addMessage(aiMessage);
 
     try {
-      // 3. Отправляем запрос и получаем поток событий
+      // 3. Отправляем запрос и получаем поток DTO
       final params = SendMessageParams(
         text: text,
         agentId: agentId,
@@ -182,75 +224,39 @@ class ChatNotifier extends StateNotifier<ChatState> {
       String? messageId;
       bool isCompleted = false;
 
-      // 5. Обрабатываем каждое событие в потоке
-      await for (final event in eventStream) {
-        if (event.type == 'delta') {
-          // Обновляем текст
-          fullText = event.data['text'] as String? ?? '';
+      // 5. Обрабатываем каждый DTO в потоке
+      await for (final dto in eventStream) {
+        // ✅ Обновляем текст
+        fullText = dto.content;
 
-          if (fullText.length <= 10) {
-            AppLogger.debug('📝 Получен первый чанк: "$fullText"');
-          }
+        // ✅ Обновляем состояние стриминга
+        _setStreaming(dto.isStreaming);
 
-          // Обновляем последнее сообщение (оно AI)
-          final currentMessages = state.messages;
-          if (currentMessages.isNotEmpty) {
-            final lastIndex = currentMessages.length - 1;
-            final lastMessage = currentMessages[lastIndex];
+        // ✅ Обновляем последнее сообщение
+        _updateMessageText(fullText);
 
-            // Проверяем, что последнее сообщение — это AI (не пользователь)
-            if (!lastMessage.isFromUser) {
-              final updatedMessage = lastMessage.copyWith(text: fullText);
+        // ✅ Если ответ завершен — сохраняем метаданные
+        if (!dto.isStreaming) {
+          finalAgentId = dto.model;
+          finalSessionId = dto.conversationId;
+          messageId = dto.id;
+          isCompleted = true;
 
-              // Заменяем последнее сообщение на обновлённое
-              final newMessages = List<Message>.from(currentMessages);
-              newMessages[lastIndex] = updatedMessage;
-
-              state = state.copyWith(messages: newMessages);
-            }
-          }
-        } else if (event.type == 'completed') {
-          // Сохраняем метаданные
-          finalAgentId = event.data['agentId'] as String?;
-          finalSessionId = event.data['conversationId'] as String?;
-          messageId = event.data['messageId'] as String?;
-
-          // ✅ ЛОГ: получен complete
           AppLogger.info('✅ Ответ получен полностью');
           AppLogger.debug('   📌 Агент: $finalAgentId');
           AppLogger.debug('   📌 Чат: $finalSessionId');
           AppLogger.debug('   📌 ID сообщения: $messageId');
           AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
 
-          // Обновляем текущего агента и сессию
-          if (finalAgentId != null) {
-            _setCurrentAgent(finalAgentId);
-          }
-          if (finalSessionId != null) {
-            _setCurrentConversationId(finalSessionId);
-          }
-
-          // Обновляем последнее сообщение с финальными данными
-          final currentMessages = state.messages;
-          if (currentMessages.isNotEmpty) {
-            final lastIndex = currentMessages.length - 1;
-            final lastMessage = currentMessages[lastIndex];
-
-            if (!lastMessage.isFromUser) {
-              final updatedMessage = lastMessage.copyWith(
-                id: messageId ?? lastMessage.id,
-                agentId: finalAgentId ?? lastMessage.agentId,
-                sessionId: finalSessionId ?? lastMessage.sessionId,
-              );
-
-              final newMessages = List<Message>.from(currentMessages);
-              newMessages[lastIndex] = updatedMessage;
-              state = state.copyWith(messages: newMessages);
-            }
-          }
+          // Обновляем финальные метаданные сообщения
+          _completeMessage(
+            agentId: finalAgentId,
+            sessionId: finalSessionId ?? sessionId,
+            messageId: messageId,
+          );
 
           // Если сессия изменилась — уведомляем
-          if (finalAgentId != null && finalSessionId != null) {
+          if (finalSessionId != null) {
             final currentAgentId = agentId;
             final currentSessionId = sessionId;
 
@@ -262,18 +268,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
               onSessionChanged?.call(finalAgentId, finalSessionId);
             }
           }
-
-          isCompleted = true;
-          AppLogger.info('Сообщение отправлено успешно');
-        } else if (event.type == 'error') {
-          // Обработка ошибки
-          final errorMessage =
-              event.data['error'] as String? ?? 'Неизвестная ошибка';
-
-          AppLogger.error('❌ Ошибка в потоке: $errorMessage');
-
-          // 👇 Бросаем BusinessException с понятным сообщением
-          throw BusinessException.streamError(errorMessage);
         }
       }
 
@@ -284,7 +278,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         );
       }
     } catch (e) {
-      // 👇 Используем ErrorHandler для преобразования ошибки
+      // Обработка ошибок...
       final appException = ErrorHandler.handle(e);
       AppLogger.logException('Ошибка в sendMessage', appException);
 
@@ -299,7 +293,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
       }
 
-      // 👇 Показываем пользователю понятное сообщение
       _setError(appException.userMessage);
     } finally {
       AppLogger.debug('🏁 Завершение обработки сообщения');

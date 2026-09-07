@@ -2,21 +2,10 @@
 
 import 'dart:async';
 import '../../data/repositories/chat_repository.dart';
+import '../../data/models/chat_response_dto.dart';
 import '../../core/logger/app_logger.dart';
 import '../../core/network/sse_parser.dart';
 import '../../core/errors/error_handler.dart';
-import '../../core/errors/business_exceptions.dart';
-
-/// Событие в процессе стриминга ответа.
-class StreamEvent {
-  /// Тип события (например, 'delta', 'completed', 'error')
-  final String type;
-
-  /// Данные события
-  final Map<String, dynamic> data;
-
-  const StreamEvent({required this.type, required this.data});
-}
 
 // ============================================================
 // 1. ПАРАМЕТРЫ
@@ -24,100 +13,43 @@ class StreamEvent {
 
 /// Параметры для отправки сообщения.
 class SendMessageParams {
-  /// Текст сообщения пользователя
   final String text;
-
-  /// ID агента (если уже знаем, кого вызывать)
   final String? agentId;
-
-  /// ID сессии/чата (если продолжаем диалог)
   final String? sessionId;
 
   const SendMessageParams({required this.text, this.agentId, this.sessionId});
 
-  /// Есть ли активная сессия (агент + чат)
   bool get hasSession => agentId != null && sessionId != null;
 }
 
 // ============================================================
-// 2. РЕЗУЛЬТАТ
-// ============================================================
-
-/// Результат отправки сообщения.
-class SendMessageResult {
-  /// Текст ответа от AI
-  final String text;
-
-  /// ID сообщения (для фидбэка и источников)
-  final String? messageId;
-
-  /// ID агента, который ответил
-  final String? agentId;
-
-  /// ID сессии/чата
-  final String? sessionId;
-
-  /// Был ли создан новый чат
-  final bool chatCreated;
-
-  const SendMessageResult({
-    required this.text,
-    this.messageId,
-    this.agentId,
-    this.sessionId,
-    this.chatCreated = false,
-  });
-}
-
-// ============================================================
-// 3. USECASE
+// 2. USECASE
 // ============================================================
 
 /// UseCase для отправки сообщения.
 ///
 /// Отвечает на вопрос: "Что делает приложение, когда пользователь отправляет сообщение?"
 ///
-/// Шаги:
-/// 1. Берёт текст сообщения
-/// 2. Отправляет его в Repository
-/// 3. Возвращает ответ
+/// Возвращает поток ChatResponseDto — чистых данных без UI-логики.
 class SendMessageUseCase {
-  // ============================================================
-  // 1. ЗАВИСИМОСТИ
-  // ============================================================
-
   final ChatRepository _repository;
-
-  // ============================================================
-  // 2. КОНСТРУКТОР
-  // ============================================================
 
   SendMessageUseCase({required ChatRepository repository})
     : _repository = repository;
 
-  // ============================================================
-  // 3. МЕТОДЫ
-  // ============================================================
-
   /// Выполнить сценарий: отправить сообщение.
-  /// Отправить сообщение и получить поток событий.
-  Stream<StreamEvent> execute(SendMessageParams params) {
+  /// Отправить сообщение и получить поток DTO.
+  Stream<ChatResponseDto> execute(SendMessageParams params) {
     AppLogger.info('Отправка сообщения: "${params.text}"');
 
-    // Создаём контроллер, который будет выдавать события
-    final controller = StreamController<StreamEvent>();
-
-    // Запускаем асинхронную работу
+    final controller = StreamController<ChatResponseDto>();
     _sendAndProcess(params, controller);
-
-    // Возвращаем поток наружу
     return controller.stream;
   }
 
-  /// Вспомогательный метод для отправки и обработки потока.
   void _sendAndProcess(
     SendMessageParams params,
-    StreamController<StreamEvent> controller,
+    StreamController<ChatResponseDto> controller,
   ) async {
     try {
       // 1. Отправляем запрос и получаем StreamedResponse
@@ -132,53 +64,42 @@ class SendMessageUseCase {
 
       // 3. Переменные для сборки ответа
       String fullText = '';
-      String? messageId;
-      String? agentId;
-      String? conversationId;
 
       // 4. Обрабатываем каждое событие
       await for (final event in eventStream) {
         final eventType = event['_event_type'] as String;
 
-        // --- Обработка разных типов событий ---
         if (eventType == 'response.output_text.delta') {
           // Получаем кусочек текста
           final delta = event['delta'] as String? ?? '';
           fullText += delta;
 
-          // Отправляем событие наружу
+          // ✅ Отправляем частичный DTO (isStreaming = true)
           controller.add(
-            StreamEvent(
-              type: 'delta',
-              data: {
-                'text':
-                    fullText, // Отправляем НАКОПЛЕННЫЙ текст, а не только delta!
-                'delta': delta,
-              },
+            ChatResponseDto(
+              id: '',
+              model: params.agentId ?? 'auto',
+              conversationId: params.sessionId,
+              content: fullText,
+              isStreaming: true,
             ),
           );
         } else if (eventType == 'response.completed') {
           // Извлекаем метаданные из финального события
           final responseData = event['response'] as Map<String, dynamic>?;
           if (responseData != null) {
-            messageId = responseData['id'] as String?;
-            agentId = responseData['model'] as String?;
-            conversationId = responseData['conversation_id'] as String?;
+            final messageId = responseData['id'] as String?;
+            final agentId = responseData['model'] as String?;
+            final conversationId = responseData['conversation_id'] as String?;
 
-            // Получаем usage (токены)
-            final usage = responseData['usage'] as Map<String, dynamic>?;
-
-            // Отправляем финальное событие
+            // ✅ Отправляем финальный DTO (isStreaming = false)
             controller.add(
-              StreamEvent(
-                type: 'completed',
-                data: {
-                  'messageId': messageId,
-                  'agentId': agentId,
-                  'conversationId': conversationId,
-                  'usage': usage,
-                  'fullText': fullText,
-                },
+              ChatResponseDto(
+                id: messageId ?? '',
+                model: agentId ?? params.agentId ?? 'auto',
+                conversationId: conversationId ?? params.sessionId,
+                content: fullText,
+                isStreaming: false,
               ),
             );
           }
@@ -186,36 +107,20 @@ class SendMessageUseCase {
           // Закрываем поток — всё готово
           controller.close();
           return;
-        } else if (eventType == 'response.output_text.done') {
-          // Это промежуточное событие — игнорируем, т.к. текст уже есть
-          continue;
         }
         // Игнорируем остальные служебные события
       }
 
-      // Если поток завершился без response.completed — закрываем с ошибкой
-      controller.add(
-        StreamEvent(
-          type: 'error',
-          data: {
-            'error': BusinessException.streamError(
-              'Поток завершился без финального события',
-            ).userMessage,
-          },
-        ),
-      );
+      // Если поток завершился без response.completed — просто закрываем
+      AppLogger.warning('Поток завершился без финального события');
       controller.close();
     } catch (error, stackTrace) {
-      // 👇 Используем ErrorHandler для преобразования ошибки
+      // Преобразуем ошибку
       final appException = ErrorHandler.handle(error);
-
-      // 👇 Профессиональное логирование
       AppLogger.logException('Ошибка в SSE-потоке', appException, stackTrace);
 
-      // 👇 Отправляем пользовательское сообщение
-      controller.add(
-        StreamEvent(type: 'error', data: {'error': appException.userMessage}),
-      );
+      // Отправляем ошибку в поток
+      controller.addError(appException);
       controller.close();
     }
   }
