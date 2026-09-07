@@ -204,8 +204,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
       agentId: agentId,
       sessionId: sessionId,
     );
+
     AppLogger.debug('🔄 Создано пустое сообщение AI (id: $tempId)');
     _addMessage(aiMessage);
+
+    AppLogger.debug('📊 Сообщений в списке: ${state.messages.length}');
+    AppLogger.debug(
+      '📊 Последнее сообщение: text="${state.messages.last.text}", isFromUser=${state.messages.last.isFromUser}',
+    );
 
     try {
       // 3. Отправляем запрос и получаем поток DTO

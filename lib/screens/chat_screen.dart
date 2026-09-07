@@ -183,7 +183,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       final bool isStreamingForThisMessage =
                           chatState.isStreaming &&
                           !message.isFromUser &&
-                          reversedIndex == 0; // Только последнее сообщение
+                          message.text.isEmpty;
 
                       return MessageBubble(
                         message: message,
