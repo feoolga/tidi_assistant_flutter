@@ -6,11 +6,7 @@ class MessageInput extends StatefulWidget {
   final Function(String) onSend;
   final bool isLoading;
 
-  const MessageInput({
-    super.key, 
-    required this.onSend,
-    this.isLoading = false,
-  });
+  const MessageInput({super.key, required this.onSend, this.isLoading = false});
 
   @override
   State<MessageInput> createState() => _MessageInputState();
@@ -85,9 +81,7 @@ class _MessageInputState extends State<MessageInput> {
               onPressed: widget.isLoading ? null : () {},
               icon: Icon(
                 Icons.attach_file,
-                color: widget.isLoading 
-                    ? Colors.grey[400] 
-                    : AppTheme.primary,
+                color: widget.isLoading ? Colors.grey[400] : AppTheme.primary,
                 size: 24,
               ),
               tooltip: 'Прикрепить файл',
@@ -100,9 +94,7 @@ class _MessageInputState extends State<MessageInput> {
               onPressed: widget.isLoading ? null : () {},
               icon: Icon(
                 Icons.mic,
-                color: widget.isLoading 
-                    ? Colors.grey[400] 
-                    : AppTheme.primary,
+                color: widget.isLoading ? Colors.grey[400] : AppTheme.primary,
                 size: 24,
               ),
               tooltip: 'Голосовое сообщение',
@@ -119,8 +111,8 @@ class _MessageInputState extends State<MessageInput> {
                   color: AppTheme.primaryLight,
                   borderRadius: BorderRadius.circular(20.0),
                   border: Border.all(
-                    color: _hasText 
-                        ? AppTheme.primary 
+                    color: _hasText
+                        ? AppTheme.primary
                         : AppTheme.primary.withValues(alpha: 0.3),
                     width: 1.5,
                   ),
@@ -129,13 +121,10 @@ class _MessageInputState extends State<MessageInput> {
                   controller: _controller,
                   enabled: !widget.isLoading,
                   decoration: InputDecoration(
-                    hintText: widget.isLoading 
-                        ? 'Ожидание ответа...' 
+                    hintText: widget.isLoading
+                        ? 'Ожидание ответа...'
                         : 'Ваше сообщение...',
-                    hintStyle: TextStyle(
-                      color: Colors.grey[400],
-                      fontSize: 15,
-                    ),
+                    hintStyle: TextStyle(color: Colors.grey[400], fontSize: 15),
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16.0,
@@ -163,28 +152,15 @@ class _MessageInputState extends State<MessageInput> {
               height: 44,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: canSend 
-                    ? AppTheme.primary 
-                    : Colors.grey[300],
+                color: canSend ? AppTheme.primary : Colors.grey[300],
               ),
               child: IconButton(
                 onPressed: canSend ? _sendMessage : null,
-                icon: widget.isLoading
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
-                          ),
-                        ),
-                      )
-                    : const Icon(
-                        Icons.send_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
+                icon: const Icon(
+                  Icons.send_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
               ),

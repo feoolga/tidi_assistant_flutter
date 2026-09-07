@@ -249,9 +249,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           isCompleted = true;
 
           // ✅ ОБНОВЛЯЕМ СОСТОЯНИЕ ЧАТА (AppBar)
-          if (finalAgentId != null) {
-            _setCurrentAgent(finalAgentId);
-          }
+          _setCurrentAgent(finalAgentId);
           if (finalSessionId != null) {
             _setCurrentConversationId(finalSessionId);
           }
