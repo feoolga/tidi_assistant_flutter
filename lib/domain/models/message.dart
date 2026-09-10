@@ -40,6 +40,14 @@ class Message {
   final Map<String, dynamic>? feedback;
 
   // ============================================================
+  // МАРКЕР ДЛЯ copyWith
+  // ============================================================
+
+  /// Специальный объект-маркер.
+  /// Означает: "это поле не было передано в copyWith".
+  static const _unset = Object();
+
+  // ============================================================
   // 4. КОНСТРУКТОРЫ
   // ============================================================
 
@@ -162,20 +170,28 @@ class Message {
     String? text,
     bool? isFromUser,
     DateTime? timestamp,
-    String? agentId,
-    String? sessionId,
-    List<Map<String, dynamic>>? sources,
-    Map<String, dynamic>? feedback,
+    Object? agentId = _unset, // ← было String?
+    Object? sessionId = _unset, // ← было String?
+    Object? sources = _unset, // ← было List<Map<String, dynamic>>?
+    Object? feedback = _unset, // ← было Map<String, dynamic>?
   }) {
     return Message(
       id: id ?? this.id,
       text: text ?? this.text,
       isFromUser: isFromUser ?? this.isFromUser,
       timestamp: timestamp ?? this.timestamp,
-      agentId: agentId ?? this.agentId,
-      sessionId: sessionId ?? this.sessionId,
-      sources: sources ?? this.sources,
-      feedback: feedback ?? this.feedback,
+
+      // ↓ четыре изменённые строки
+      agentId: identical(agentId, _unset) ? this.agentId : agentId as String?,
+      sessionId: identical(sessionId, _unset)
+          ? this.sessionId
+          : sessionId as String?,
+      sources: identical(sources, _unset)
+          ? this.sources
+          : sources as List<Map<String, dynamic>>?,
+      feedback: identical(feedback, _unset)
+          ? this.feedback
+          : feedback as Map<String, dynamic>?,
     );
   }
 

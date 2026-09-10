@@ -31,6 +31,14 @@ class ChatResponseDto {
   final bool isStreaming;
 
   // ============================================================
+  // МАРКЕР ДЛЯ copyWith
+  // ============================================================
+
+  /// Специальный объект-маркер.
+  /// Означает: "это поле не было передано в copyWith".
+  static const _unset = Object();
+
+  // ============================================================
   // 2. КОНСТРУКТОРЫ
   // ============================================================
 
@@ -58,14 +66,16 @@ class ChatResponseDto {
   ChatResponseDto copyWith({
     String? id,
     String? model,
-    String? conversationId,
+    Object? conversationId = _unset,
     String? content,
     bool? isStreaming,
   }) {
     return ChatResponseDto(
       id: id ?? this.id,
       model: model ?? this.model,
-      conversationId: conversationId ?? this.conversationId,
+      conversationId: identical(conversationId, _unset)
+          ? this.conversationId
+          : conversationId as String?,
       content: content ?? this.content,
       isStreaming: isStreaming ?? this.isStreaming,
     );
