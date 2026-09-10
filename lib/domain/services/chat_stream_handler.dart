@@ -38,6 +38,7 @@ class ChatStreamHandler {
     //    Живут между вызовами onData — накапливают текст и флаг завершения.
     String fullText = '';
     bool isCompleted = false;
+    bool isClosed = false;
 
     subscription = source.listen(
       (dto) {
@@ -49,37 +50,34 @@ class ChatStreamHandler {
           // Стрим ещё идёт — эмитим промежуточное событие
           controller.add(ChatStreamDelta(fullText: fullText));
         } else {
-          // Стрим завершён — эмитим финальное событие
-          controller.add(
-            ChatStreamCompleted(
-              fullText: fullText,
-              messageId: dto.id.isEmpty ? null : dto.id,
-              agentId: dto.model,
-              conversationId: dto.conversationId,
-            ),
-          );
-
-          isCompleted = true;
-          controller.close();
+          if (!isClosed) {
+            isClosed = true;
+            isCompleted = true;
+            controller.add(
+              ChatStreamCompleted(
+                fullText: fullText,
+                messageId: dto.id.isEmpty ? null : dto.id,
+                agentId: dto.model,
+                conversationId: dto.conversationId,
+              ),
+            );
+            controller.close();
+          }
         }
       },
       onError: (Object error, StackTrace stackTrace) {
-        // Преобразуем любую ошибку в AppException
         final appException = ErrorHandler.handle(error);
-
-        // Логируем со стектрейсом — для отладки
         AppLogger.logException('Ошибка в SSE-стриме', appException, stackTrace);
 
-        // Эмитим событие об ошибке и закрываем контроллер
-        controller.add(ChatStreamFailed(error: appException));
-        controller.close();
+        if (!isClosed) {
+          isClosed = true;
+          controller.add(ChatStreamFailed(error: appException));
+          controller.close();
+        }
       },
       onDone: () {
-        // Если стрим закончился, а ChatStreamCompleted не пришёл —
-        // это нарушение контракта сервера. Считаем ошибкой.
-        if (!isCompleted) {
+        if (!isCompleted && !isClosed) {
           AppLogger.warning('Поток завершился без ChatStreamCompleted');
-
           controller.add(
             ChatStreamFailed(
               error: BusinessException.streamError(
@@ -89,7 +87,10 @@ class ChatStreamHandler {
           );
         }
 
-        controller.close();
+        if (!isClosed) {
+          isClosed = true;
+          controller.close();
+        }
       },
     );
 
