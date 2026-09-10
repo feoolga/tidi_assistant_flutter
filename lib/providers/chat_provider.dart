@@ -3,12 +3,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/logger/app_logger.dart';
 import '../domain/models/message.dart';
+import '../domain/services/chat_stream_event.dart';
+import '../domain/services/chat_stream_handler.dart';
 import '../domain/usecases/send_message_usecase.dart';
 import 'session_provider.dart';
 import 'agent_provider.dart';
 import '../data/repositories/chat_repository.dart';
 import '../core/errors/error_handler.dart';
-import '../core/errors/business_exceptions.dart';
 
 // ============================================================
 // 1. СОСТОЯНИЕ ЧАТА
@@ -45,21 +46,14 @@ class ChatState {
     bool? isLoading,
     String? error,
     bool? isStreaming,
-    // Используем Object? вместо String?
-    // По умолчанию — маркер _unset
     Object? currentAgentId = _unset,
     Object? currentConversationId = _unset,
   }) {
     return ChatState(
-      // Обычные поля — как раньше (null = не передано)
       messages: messages ?? this.messages,
       isLoading: isLoading ?? this.isLoading,
       error: error ?? this.error,
       isStreaming: isStreaming ?? this.isStreaming,
-
-      // Поля со sentinel:
-      // Если параметр — маркер, оставляем старое значение
-      // Иначе — используем переданное (даже если это null!)
       currentAgentId: identical(currentAgentId, _unset)
           ? this.currentAgentId
           : currentAgentId as String?,
@@ -80,17 +74,24 @@ class ChatState {
 class ChatNotifier extends StateNotifier<ChatState> {
   final ChatRepository _repository;
   final SendMessageUseCase _sendMessageUseCase;
+  final ChatStreamHandler _streamHandler;
   final void Function(String agentId, String sessionId)? onSessionChanged;
 
   ChatNotifier({
     required ChatRepository repository,
     required SendMessageUseCase sendMessageUseCase,
+    required ChatStreamHandler streamHandler,
     this.onSessionChanged,
   }) : _repository = repository,
        _sendMessageUseCase = sendMessageUseCase,
+       _streamHandler = streamHandler,
        super(ChatState.initial()) {
     _addWelcomeMessage();
   }
+
+  // ============================================================
+  // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ СОСТОЯНИЯ
+  // ============================================================
 
   void _addWelcomeMessage() {
     if (state.messages.isEmpty) {
@@ -132,6 +133,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     state = state.copyWith(messages: [...state.messages, message]);
   }
 
+  void _setMessages(List<Message> messages) {
+    state = state.copyWith(messages: messages);
+  }
+
   /// Обновляет текст последнего сообщения AI
   void _updateMessageText(String text) {
     final currentMessages = state.messages;
@@ -140,7 +145,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final lastIndex = currentMessages.length - 1;
     final lastMessage = currentMessages[lastIndex];
 
-    // Проверяем, что последнее сообщение — это AI (не пользователь)
     if (!lastMessage.isFromUser) {
       final updatedMessage = lastMessage.copyWith(text: text);
       final newMessages = List<Message>.from(currentMessages);
@@ -174,9 +178,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  void _setMessages(List<Message> messages) {
-    state = state.copyWith(messages: messages);
+  /// Удаляет пустое AI-сообщение (если есть) — используется при ошибке
+  void _removeEmptyAiMessageIfAny() {
+    final currentMessages = state.messages;
+    if (currentMessages.isEmpty) return;
+
+    final lastMessage = currentMessages.last;
+    if (!lastMessage.isFromUser && lastMessage.text.isEmpty) {
+      final newMessages = List<Message>.from(currentMessages)..removeLast();
+      state = state.copyWith(messages: newMessages);
+    }
   }
+
+  // ============================================================
+  // ОТПРАВКА СООБЩЕНИЯ
+  // ============================================================
 
   Future<void> sendMessage({
     required String text,
@@ -204,14 +220,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       agentId: agentId,
       sessionId: sessionId,
     );
-
-    AppLogger.debug('🔄 Создано пустое сообщение AI (id: $tempId)');
     _addMessage(aiMessage);
-
-    AppLogger.debug('📊 Сообщений в списке: ${state.messages.length}');
-    AppLogger.debug(
-      '📊 Последнее сообщение: text="${state.messages.last.text}", isFromUser=${state.messages.last.isFromUser}',
-    );
 
     try {
       // 3. Отправляем запрос и получаем поток DTO
@@ -221,90 +230,68 @@ class ChatNotifier extends StateNotifier<ChatState> {
         sessionId: sessionId,
       );
 
-      final eventStream = _sendMessageUseCase.execute(params);
+      // 4. Оборачиваем в хендлер — теперь работаем с событиями
+      final source = _sendMessageUseCase.execute(params);
+      final events = _streamHandler.handle(source);
 
-      // 4. Переменные для сбора данных
-      String fullText = '';
-      String? finalAgentId;
-      String? finalSessionId;
-      String? messageId;
-      bool isCompleted = false;
+      // 5. Обрабатываем события
+      await for (final event in events) {
+        switch (event) {
+          case ChatStreamStarted():
+            AppLogger.debug('🟢 Стрим начался');
+            break;
 
-      // 5. Обрабатываем каждый DTO в потоке
-      await for (final dto in eventStream) {
-        // ✅ Обновляем текст
-        fullText = dto.content;
+          case ChatStreamDelta(:final fullText):
+            _updateMessageText(fullText);
+            break;
 
-        // ✅ Обновляем состояние стриминга
-        _setStreaming(dto.isStreaming);
+          case ChatStreamCompleted(
+            :final fullText,
+            :final messageId,
+            :final agentId,
+            :final conversationId,
+          ):
+            _updateMessageText(fullText);
+            _setStreaming(false);
 
-        // ✅ Обновляем последнее сообщение
-        _updateMessageText(fullText);
+            // Обновляем метаданные последнего сообщения
+            _completeMessage(
+              agentId: agentId,
+              sessionId: conversationId ?? sessionId,
+              messageId: messageId,
+            );
 
-        // ✅ Если ответ завершен — сохраняем метаданные
-        if (!dto.isStreaming) {
-          finalAgentId = dto.model;
-          finalSessionId = dto.conversationId;
-          messageId = dto.id;
-          isCompleted = true;
-
-          // ✅ ОБНОВЛЯЕМ СОСТОЯНИЕ ЧАТА (AppBar)
-          _setCurrentAgent(finalAgentId);
-          if (finalSessionId != null) {
-            _setCurrentConversationId(finalSessionId);
-          }
-
-          AppLogger.info('✅ Ответ получен полностью');
-          AppLogger.debug('   📌 Агент: $finalAgentId');
-          AppLogger.debug('   📌 Чат: $finalSessionId');
-          AppLogger.debug('   📌 ID сообщения: $messageId');
-          AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
-
-          // Обновляем финальные метаданные сообщения
-          _completeMessage(
-            agentId: finalAgentId,
-            sessionId: finalSessionId ?? sessionId,
-            messageId: messageId,
-          );
-
-          // Если сессия изменилась — уведомляем
-          if (finalSessionId != null) {
-            final currentAgentId = agentId;
-            final currentSessionId = sessionId;
-
-            if (currentAgentId != finalAgentId ||
-                currentSessionId != finalSessionId) {
-              AppLogger.info(
-                'Сессия изменилась: агент=$currentAgentId→$finalAgentId, чат=$currentSessionId→$finalSessionId',
-              );
-              onSessionChanged?.call(finalAgentId, finalSessionId);
+            // Обновляем состояние сессии (AppBar)
+            _setCurrentAgent(agentId);
+            if (conversationId != null) {
+              _setCurrentConversationId(conversationId);
             }
-          }
-        }
-      }
 
-      // Если поток завершился без completed — считаем это ошибкой
-      if (!isCompleted) {
-        throw BusinessException.streamError(
-          'Поток завершился без финального события',
-        );
+            AppLogger.info('✅ Ответ получен полностью');
+            AppLogger.debug('   📌 Агент: $agentId');
+            AppLogger.debug('   📌 Чат: $conversationId');
+            AppLogger.debug('   📌 ID сообщения: $messageId');
+            AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
+
+            // Уведомляем о смене сессии, если она изменилась
+            if (conversationId != null &&
+                (agentId != sessionId || conversationId != sessionId)) {
+              onSessionChanged?.call(agentId ?? '', conversationId);
+            }
+            break;
+
+          case ChatStreamFailed(:final error):
+            AppLogger.logException('Ошибка в стриме', error);
+            _removeEmptyAiMessageIfAny();
+            _setError(error.userMessage);
+            break;
+        }
       }
     } catch (e) {
-      // Обработка ошибок...
+      // На всякий случай — если что-то упадёт вне хендлера
       final appException = ErrorHandler.handle(e);
       AppLogger.logException('Ошибка в sendMessage', appException);
-
-      // Удаляем пустое сообщение AI, если оно есть
-      final currentMessages = state.messages;
-      if (currentMessages.isNotEmpty) {
-        final lastMessage = currentMessages.last;
-        if (!lastMessage.isFromUser && lastMessage.text.isEmpty) {
-          final newMessages = List<Message>.from(currentMessages);
-          newMessages.removeLast();
-          state = state.copyWith(messages: newMessages);
-        }
-      }
-
+      _removeEmptyAiMessageIfAny();
       _setError(appException.userMessage);
     } finally {
       AppLogger.debug('🏁 Завершение обработки сообщения');
@@ -312,6 +299,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
       _setStreaming(false);
     }
   }
+
+  // ============================================================
+  // ЗАГРУЗКА И УПРАВЛЕНИЕ ЧАТОМ
+  // ============================================================
 
   Future<void> loadChat(String agentId, String chatId) async {
     AppLogger.info('Загрузка чата: агент=$agentId, чат=$chatId');
@@ -330,10 +321,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       AppLogger.info('Загружено сообщений: ${messages.length}');
     } catch (e) {
-      // 👇 Используем ErrorHandler для преобразования ошибки
       final appException = ErrorHandler.handle(e);
       AppLogger.logException('Ошибка в loadChat', appException);
-      // 👇 Показываем пользователю понятное сообщение
       _setError(appException.userMessage);
     } finally {
       _setLoading(false);
@@ -370,6 +359,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
 // 3. ПРОВАЙДЕРЫ
 // ============================================================
 
+/// Провайдер для ChatStreamHandler
+final chatStreamHandlerProvider = Provider<ChatStreamHandler>((ref) {
+  return ChatStreamHandler();
+});
+
 /// Провайдер для SendMessageUseCase
 final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
   final repository = ref.read(chatRepositoryProvider);
@@ -380,10 +374,12 @@ final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
   final repository = ref.read(chatRepositoryProvider);
   final sendMessageUseCase = ref.read(sendMessageUseCaseProvider);
+  final streamHandler = ref.read(chatStreamHandlerProvider);
 
   return ChatNotifier(
     repository: repository,
     sendMessageUseCase: sendMessageUseCase,
+    streamHandler: streamHandler,
     onSessionChanged: (agentId, sessionId) {
       ref.read(sessionProvider.notifier).setSession(agentId, sessionId);
     },
