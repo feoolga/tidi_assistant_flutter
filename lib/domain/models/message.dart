@@ -170,10 +170,10 @@ class Message {
     String? text,
     bool? isFromUser,
     DateTime? timestamp,
-    Object? agentId = _unset, // ← было String?
-    Object? sessionId = _unset, // ← было String?
-    Object? sources = _unset, // ← было List<Map<String, dynamic>>?
-    Object? feedback = _unset, // ← было Map<String, dynamic>?
+    Object? agentId = _unset,
+    Object? sessionId = _unset,
+    Object? sources = _unset,
+    Object? feedback = _unset,
   }) {
     return Message(
       id: id ?? this.id,
