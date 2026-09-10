@@ -1,4 +1,4 @@
-// lib/models/message.dart
+// lib/domain/models/message.dart
 
 /// Модель сообщения в чате.
 /// Используется как для сообщений пользователя, так и для ответов AI.

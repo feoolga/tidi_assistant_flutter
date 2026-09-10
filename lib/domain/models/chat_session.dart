@@ -1,4 +1,4 @@
-// lib/models/chat_session.dart
+// lib/domain/models/chat_session.dart
 
 /// Модель сессии чата — соответствует ответу GET /agents/{agent_id}/sessions
 class ChatSession {

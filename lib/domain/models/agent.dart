@@ -1,4 +1,4 @@
-// lib/models/agent.dart
+// lib/domain/models/agent.dart
 
 class Agent {
   final String id;
