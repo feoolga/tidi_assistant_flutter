@@ -27,8 +27,9 @@ class ChatSession {
 
   /// Отображаемое название (если title нет — берем дату)
   String get displayTitle {
-    if (title != null && title!.isNotEmpty) {
-      return title!;
+    final t = title;
+    if (t != null && t.isNotEmpty) {
+      return t; // здесь t — String (не String?)
     }
     return 'Чат от ${_formatDate(createdAt)}';
   }
