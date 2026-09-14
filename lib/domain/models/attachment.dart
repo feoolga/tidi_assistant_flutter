@@ -159,7 +159,7 @@ class Attachment {
       mimeType: mimeType,
       sizeBytes: sizeBytes,
       localPath: localPath,
-      kind: _kindFromMime(mimeType),
+      kind: attachmentKindFromMime(mimeType),
       status: AttachmentStatus.pending,
       conversationId: conversationId,
     );
@@ -251,9 +251,13 @@ class Attachment {
 
 /// Определить [AttachmentKind] по MIME-типу.
 ///
+/// Публичная функция (не метод класса), потому что используется также
+/// в `AttachmentMapper` — при переводе ответа сервера в доменную модель.
+/// Один источник правды о том, как MIME превращается в [AttachmentKind].
+///
 /// Возвращает [AttachmentKind.other], если MIME неизвестен —
 /// UI покажет нейтральную иконку файла.
-AttachmentKind _kindFromMime(String mimeType) {
+AttachmentKind attachmentKindFromMime(String mimeType) {
   if (mimeType.startsWith('image/')) return AttachmentKind.image;
   if (mimeType == 'application/pdf') return AttachmentKind.pdf;
   return AttachmentKind.other;
