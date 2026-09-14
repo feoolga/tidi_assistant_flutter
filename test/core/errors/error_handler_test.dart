@@ -3,7 +3,6 @@
 import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:tidi_assistant_flutter/core/errors/app_exception.dart';
 import 'package:tidi_assistant_flutter/core/errors/error_handler.dart';
 import 'package:tidi_assistant_flutter/core/errors/file_exceptions.dart';
 import 'package:tidi_assistant_flutter/core/errors/network_exceptions.dart';
