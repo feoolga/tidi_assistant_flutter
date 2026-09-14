@@ -57,7 +57,7 @@ class FileException extends AppException {
   factory FileException.unsupportedFormat({required String mimeType}) {
     return FileException(
       code: 'FILE_UNSUPPORTED_FORMAT',
-      userMessage: 'Формат не поддерживается. Разрешены: PDF, JPG, PNG, WebP.',
+      userMessage: 'Формат не поддерживается. Разрешены: PDF, JPG, PNG.',
       technicalDetails: 'Unsupported MIME type: $mimeType',
     );
   }

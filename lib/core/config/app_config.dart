@@ -98,7 +98,6 @@ class AppConfig {
     'image/jpeg',
     'image/jpg',
     'image/png',
-    'image/webp',
   };
 
   /// Разрешённые расширения файлов.
@@ -111,9 +110,8 @@ class AppConfig {
     'jpg',
     'jpeg',
     'png',
-    'webp',
   ];
 
   /// Человекочитаемое описание разрешённых форматов — для сообщений об ошибке.
-  static const String allowedFormatsDescription = 'PDF, JPG, PNG, WebP';
+  static const String allowedFormatsDescription = 'PDF, JPG, PNG';
 }

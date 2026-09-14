@@ -91,7 +91,6 @@ void main() {
         expect(e.userMessage, contains('PDF'));
         expect(e.userMessage, contains('JPG'));
         expect(e.userMessage, contains('PNG'));
-        expect(e.userMessage, contains('WebP'));
       });
 
       test('technicalDetails содержит MIME-тип', () {
