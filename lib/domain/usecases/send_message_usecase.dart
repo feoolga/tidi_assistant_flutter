@@ -6,6 +6,7 @@ import '../../data/models/chat_response_dto.dart';
 import '../../core/logger/app_logger.dart';
 import '../../core/network/sse_parser.dart';
 import '../../core/errors/error_handler.dart';
+import '../models/attachment.dart';
 
 // ============================================================
 // 1. ПАРАМЕТРЫ
@@ -13,13 +14,34 @@ import '../../core/errors/error_handler.dart';
 
 /// Параметры для отправки сообщения.
 class SendMessageParams {
+  /// Текст сообщения.
   final String text;
+
+  /// ID агента (если уже выбран) — используется для роутинга на бэкенде.
   final String? agentId;
+
+  /// ID чата (если уже создан) — используется для продолжения диалога.
   final String? sessionId;
 
-  const SendMessageParams({required this.text, this.agentId, this.sessionId});
+  /// Вложения, приложенные пользователем к этому сообщению.
+  ///
+  /// Все вложения должны быть уже загружены на сервер (`status: done`)
+  /// и иметь `remoteId` — иначе их нельзя передать в `input_file`.
+  /// Пустой список означает, что сообщение текстовое.
+  final List<Attachment> attachments;
 
+  const SendMessageParams({
+    required this.text,
+    this.agentId,
+    this.sessionId,
+    this.attachments = const [],
+  });
+
+  /// Есть ли активная сессия (агент + чат).
   bool get hasSession => agentId != null && sessionId != null;
+
+  /// Есть ли вложения у сообщения.
+  bool get hasAttachments => attachments.isNotEmpty;
 }
 
 // ============================================================
