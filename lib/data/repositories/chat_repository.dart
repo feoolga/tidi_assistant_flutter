@@ -81,6 +81,47 @@ class ChatRepository {
     }
   }
 
+  /// Определить, какого агента выберет роутер, без реального вызова.
+  ///
+  /// POST /route — тело `{"message": "..."}`, ответ `{"agent": "<id>"}`.
+  ///
+  /// Используется при открытии нового чата: сначала узнаём `agent_id`,
+  /// потом создаём чат у этого агента и дальше все сообщения идут
+  /// в `POST /v1/responses` с явным `model: agent_id`.
+  ///
+  /// Возвращает `agent_id` (`"epoz"`, `"document_chat"`, ...).
+  /// Бросает [ServerException], если сервер ответил ошибкой или
+  /// прислал невалидный ответ.
+  Future<String> getRoute(String message) async {
+    try {
+      final response = await _api.route(message: message);
+
+      if (response.statusCode != 200) {
+        AppLogger.error('Ошибка роутинга: ${response.statusCode}');
+        throw ServerException.clientError(
+          statusCode: response.statusCode,
+          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
+        );
+      }
+
+      final Map<String, dynamic> data = jsonDecode(response.body);
+      final agentId = data['agent'];
+
+      if (agentId is! String || agentId.isEmpty) {
+        AppLogger.error('Невалидный ответ роутера: отсутствует поле "agent"');
+        throw ServerException.parseError(
+          'В ответе /route отсутствует поле "agent": ${response.body}',
+        );
+      }
+
+      AppLogger.info('Роутер выбрал агента: $agentId');
+      return agentId;
+    } catch (e) {
+      AppLogger.error('Не удалось определить агента', e);
+      throw ErrorHandler.handle(e);
+    }
+  }
+
   // ============================================================
   // 4. РАБОТА С ЧАТАМИ (CONVERSATIONS)
   // ============================================================
