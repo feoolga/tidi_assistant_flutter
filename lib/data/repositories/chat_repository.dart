@@ -15,6 +15,7 @@ import '../models/message_dto.dart';
 import '../mappers/agent_mapper.dart';
 import '../mappers/chat_session_mapper.dart';
 import '../mappers/message_mapper.dart';
+import '../../domain/models/attachment.dart';
 
 /// Репозиторий для работы с чатом.
 ///
@@ -193,16 +194,23 @@ class ChatRepository {
   // ============================================================
 
   /// Отправить сообщение и получить сырой SSE-поток.
+  /// Отправить сообщение и получить сырой SSE-поток.
+  ///
+  /// [attachments] — уже загруженные вложения (`status: done`,
+  /// `remoteId != null`). Формируют `input_file`-части в формате
+  /// Responses API. Вложения без `remoteId` молча отбрасываются —
+  /// см. [_buildInput].
   Future<http.StreamedResponse> sendMessageStream({
     required String text,
     String? conversationId,
     String? agentId,
+    List<Attachment> attachments = const [],
   }) async {
     AppLogger.info('Отправка стрим-запроса: "$text"');
 
     final Map<String, dynamic> body = {
       'model': agentId ?? 'auto',
-      'input': text,
+      'input': _buildInput(text: text, attachments: attachments),
       'stream': true,
     };
 
@@ -229,5 +237,45 @@ class ChatRepository {
       AppLogger.error('Ошибка при отправке стрим-запроса', e);
       throw ErrorHandler.handle(e);
     }
+  }
+
+  /// Собирает значение `input` для тела запроса в формате Responses API.
+  ///
+  /// Без вложений — просто строка (совместимо со старым поведением).
+  /// С вложениями — массив items, где `content` — массив частей:
+  /// - `input_text` с текстом вопроса;
+  /// - `input_file` для каждого вложения с плоским `file_id`
+  ///   (именно такой формат ждёт Responses API, см. README `document_chat`).
+  ///
+  /// Вложения без `remoteId` (например, ещё не загруженные) молча
+  /// отбрасываются с предупреждением в лог. Так отправка не падает
+  /// из-за одного сломанного файла, и в запрос не уходит мусор.
+  Object _buildInput({
+    required String text,
+    required List<Attachment> attachments,
+  }) {
+    final uploaded = attachments
+        .where((a) => a.remoteId != null && a.remoteId!.isNotEmpty)
+        .toList();
+
+    if (uploaded.length < attachments.length) {
+      AppLogger.warning(
+        'Пропущено ${attachments.length - uploaded.length} '
+        'незагруженных вложений при формировании input',
+      );
+    }
+
+    if (uploaded.isEmpty) return text;
+
+    return [
+      {
+        'role': 'user',
+        'content': [
+          {'type': 'input_text', 'text': text},
+          for (final att in uploaded)
+            {'type': 'input_file', 'file_id': att.remoteId},
+        ],
+      },
+    ];
   }
 }
