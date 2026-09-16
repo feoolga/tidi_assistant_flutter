@@ -79,6 +79,7 @@ class SendMessageUseCase {
         text: params.text,
         conversationId: params.sessionId,
         agentId: params.agentId,
+        attachments: params.attachments,
       );
 
       // 2. Парсим SSE-поток
