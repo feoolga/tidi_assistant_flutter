@@ -6,6 +6,7 @@ import '../domain/models/message.dart';
 import '../domain/services/chat_stream_event.dart';
 import '../domain/services/chat_stream_handler.dart';
 import '../domain/usecases/send_message_usecase.dart';
+import '../domain/usecases/upload_attachment_usecase.dart';
 import 'session_provider.dart';
 import 'agent_provider.dart';
 import '../data/repositories/chat_repository.dart';
@@ -368,6 +369,17 @@ final chatStreamHandlerProvider = Provider<ChatStreamHandler>((ref) {
 final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
   final repository = ref.read(chatRepositoryProvider);
   return SendMessageUseCase(repository: repository);
+});
+
+/// Провайдер для UploadAttachmentUseCase
+///
+/// Используется в ChatNotifier.addAttachment — грузит файл на сервер
+/// и возвращает доменную модель Attachment.
+final uploadAttachmentUseCaseProvider = Provider<UploadAttachmentUseCase>((
+  ref,
+) {
+  final repository = ref.read(attachmentRepositoryProvider);
+  return UploadAttachmentUseCase(repository: repository);
 });
 
 /// Основной провайдер чата.
