@@ -72,7 +72,7 @@ class ChatState {
   ChatState copyWith({
     List<Message>? messages,
     bool? isLoading,
-    String? error,
+    Object? error = _unset,
     bool? isStreaming,
     Object? currentAgentId = _unset,
     Object? currentConversationId = _unset,
@@ -83,7 +83,7 @@ class ChatState {
     return ChatState(
       messages: messages ?? this.messages,
       isLoading: isLoading ?? this.isLoading,
-      error: error ?? this.error,
+      error: identical(error, _unset) ? this.error : error as String?,
       isStreaming: isStreaming ?? this.isStreaming,
       currentAgentId: identical(currentAgentId, _unset)
           ? this.currentAgentId
