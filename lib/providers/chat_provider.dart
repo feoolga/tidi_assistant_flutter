@@ -1,7 +1,11 @@
 // lib/providers/chat_provider.dart
 
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/config/app_config.dart';
 import '../core/logger/app_logger.dart';
+import '../core/errors/error_handler.dart';
+import '../core/errors/file_exceptions.dart';
 import '../domain/models/message.dart';
 import '../domain/models/attachment.dart';
 import '../domain/services/chat_stream_event.dart';
@@ -11,7 +15,6 @@ import '../domain/usecases/upload_attachment_usecase.dart';
 import 'session_provider.dart';
 import 'agent_provider.dart';
 import '../data/repositories/chat_repository.dart';
-import '../core/errors/error_handler.dart';
 
 // ============================================================
 // 1. СОСТОЯНИЕ ЧАТА
@@ -39,6 +42,13 @@ class ChatState {
   /// SnackBar и очищает поле через `clearInfoMessage()`.
   final String? infoMessage;
 
+  /// Идёт ли сейчас загрузка прикреплённого файла на сервер.
+  ///
+  /// Пока `true` — UI блокирует кнопку «прикрепить» (иначе пользователь
+  /// может запустить вторую загрузку параллельно, что приведёт к гонке
+  /// при создании чата и записи `pendingAttachments`).
+  final bool isAddingAttachment;
+
   const ChatState({
     this.messages = const [],
     this.isLoading = false,
@@ -48,6 +58,7 @@ class ChatState {
     this.currentConversationId,
     this.pendingAttachments = const [],
     this.infoMessage,
+    this.isAddingAttachment = false,
   });
 
   factory ChatState.initial() {
@@ -67,6 +78,7 @@ class ChatState {
     Object? currentConversationId = _unset,
     List<Attachment>? pendingAttachments,
     Object? infoMessage = _unset,
+    bool? isAddingAttachment,
   }) {
     return ChatState(
       messages: messages ?? this.messages,
@@ -83,6 +95,7 @@ class ChatState {
       infoMessage: identical(infoMessage, _unset)
           ? this.infoMessage
           : infoMessage as String?,
+      isAddingAttachment: isAddingAttachment ?? this.isAddingAttachment,
     );
   }
 
@@ -101,18 +114,27 @@ class ChatState {
 // ============================================================
 
 class ChatNotifier extends StateNotifier<ChatState> {
+  /// Ссылка на Riverpod — нужна, чтобы читать другие провайдеры
+  /// (например, `sessionProvider`) из методов Notifier'а.
+  final Ref _ref;
+
   final ChatRepository _repository;
   final SendMessageUseCase _sendMessageUseCase;
+  final UploadAttachmentUseCase _uploadAttachmentUseCase;
   final ChatStreamHandler _streamHandler;
   final void Function(String agentId, String sessionId)? onSessionChanged;
 
   ChatNotifier({
+    required Ref ref,
     required ChatRepository repository,
     required SendMessageUseCase sendMessageUseCase,
+    required UploadAttachmentUseCase uploadAttachmentUseCase,
     required ChatStreamHandler streamHandler,
     this.onSessionChanged,
-  }) : _repository = repository,
+  }) : _ref = ref,
+       _repository = repository,
        _sendMessageUseCase = sendMessageUseCase,
+       _uploadAttachmentUseCase = uploadAttachmentUseCase,
        _streamHandler = streamHandler,
        super(ChatState.initial()) {
     _addWelcomeMessage();
@@ -136,6 +158,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   void _setLoading(bool isLoading) {
     state = state.copyWith(isLoading: isLoading);
+  }
+
+  void _setAddingAttachment(bool value) {
+    state = state.copyWith(isAddingAttachment: value);
   }
 
   void _setCurrentAgent(String? agentId) {
@@ -168,6 +194,24 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   void _setMessages(List<Message> messages) {
     state = state.copyWith(messages: messages);
+  }
+
+  /// Добавить вложение в конец списка `pendingAttachments`.
+  void _addPendingAttachment(Attachment attachment) {
+    state = state.copyWith(
+      pendingAttachments: [...state.pendingAttachments, attachment],
+    );
+  }
+
+  /// Заменить вложение по `localId` на обновлённую версию.
+  ///
+  /// Используется после завершения загрузки: локальная запись
+  /// `status: pending` заменяется на `status: done` (или `failed`).
+  void _replacePendingAttachment(String localId, Attachment updated) {
+    final newList = state.pendingAttachments
+        .map((a) => a.localId == localId ? updated : a)
+        .toList();
+    state = state.copyWith(pendingAttachments: newList);
   }
 
   /// Обновляет текст последнего сообщения AI
@@ -220,6 +264,158 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (!lastMessage.isFromUser && lastMessage.text.isEmpty) {
       final newMessages = List<Message>.from(currentMessages)..removeLast();
       state = state.copyWith(messages: newMessages);
+    }
+  }
+
+  // ============================================================
+  // ПРИКРЕПЛЕНИЕ ФАЙЛОВ
+  // ============================================================
+
+  /// Прикрепить файл: загрузить на сервер и добавить в `pendingAttachments`.
+  ///
+  /// Полный флоу:
+  /// 1. Валидация: количество, размер, MIME, дубликат.
+  /// 2. Создание `Attachment(status: pending)` и добавление в `pendingAttachments`
+  ///    — чтобы UI сразу показал превью со спиннером.
+  /// 3. При необходимости — создание чата у `document_chat` (файлы работают
+  ///    только через этого агента; в чужом чате кнопка «прикрепить» заблокирована).
+  /// 4. Загрузка файла через [UploadAttachmentUseCase].
+  /// 5. Замена `pending`-вложения на `done` (или `failed` при ошибке).
+  ///
+  /// Защищена от race: если предыдущее прикрепление ещё в процессе —
+  /// выходим без изменений. Флаг сбрасывается в `finally` в любом случае.
+  Future<void> addAttachment(File file) async {
+    // Защита от race condition: пока одна загрузка идёт, вторую не начинаем.
+    // Проверяем через `ChatState.isAddingAttachment` — один источник правды.
+    if (state.isAddingAttachment) {
+      AppLogger.warning(
+        'Прикрепление уже в процессе — пропускаем повторный вызов',
+      );
+      return;
+    }
+
+    // В чужом чате файлы сейчас не поддерживаются (решение техдира — в работе).
+    // Кнопка «прикрепить» в UI тоже блокируется, здесь — вторая линия защиты.
+    final sessionState = _ref.read(sessionProvider);
+    if (sessionState.agentId != null &&
+        sessionState.agentId != 'document_chat') {
+      AppLogger.warning(
+        'Прикрепление файла в чате агента ${sessionState.agentId} не поддерживается',
+      );
+      return;
+    }
+
+    _setAddingAttachment(true);
+
+    // Отдельная переменная — чтобы в catch знать, какой localId поставить failed.
+    String? localId;
+
+    try {
+      // 1. Валидация количества.
+      final currentCount = state.pendingAttachments.length;
+      if (currentCount >= AppConfig.maxAttachedFiles) {
+        throw FileException.tooManyFiles(
+          actual: currentCount + 1,
+          max: AppConfig.maxAttachedFiles,
+        );
+      }
+
+      // 2. Имя, размер, MIME.
+      final fileName = file.uri.pathSegments.last;
+      final sizeBytes = await file.length();
+
+      if (sizeBytes > AppConfig.maxFileSizeBytes) {
+        throw FileException.tooLarge(
+          sizeBytes: sizeBytes,
+          maxBytes: AppConfig.maxFileSizeBytes,
+        );
+      }
+
+      final mimeType = attachmentMimeTypeFromFilename(fileName);
+      if (!AppConfig.allowedMimeTypes.contains(mimeType)) {
+        throw FileException.unsupportedFormat(mimeType: mimeType);
+      }
+
+      // 3. Проверка дубликата: тот же fileName + sizeBytes уже прикреплён
+      //    (включая записи со status: failed — их надо удалить вручную).
+      final isDuplicate = state.pendingAttachments.any(
+        (a) => a.fileName == fileName && a.sizeBytes == sizeBytes,
+      );
+      if (isDuplicate) {
+        _setInfoMessage('Файл уже прикреплён');
+        return;
+      }
+
+      // 4. Создаём локальный Attachment и сразу показываем в UI.
+      localId = DateTime.now().millisecondsSinceEpoch.toString();
+      final pending = Attachment.fromLocalFile(
+        localId: localId,
+        fileName: fileName,
+        mimeType: mimeType,
+        sizeBytes: sizeBytes,
+        localPath: file.path,
+      );
+      _addPendingAttachment(pending);
+
+      // 5. Обеспечиваем чат у document_chat.
+      var conversationId = sessionState.sessionId;
+      if (conversationId == null) {
+        AppLogger.info('Создаём чат document_chat для работы с файлом');
+        final session = await _repository.createConversation(
+          agentId: 'document_chat',
+          title: fileName,
+        );
+        conversationId = session.id;
+
+        // Синхронизируем sessionProvider (через callback — как при отправке).
+        onSessionChanged?.call('document_chat', conversationId);
+
+        // Обновляем локальное состояние — UI увидит смену агента в AppBar.
+        _setCurrentAgent('document_chat');
+        _setCurrentConversationId(conversationId);
+      }
+
+      // 6. Загружаем файл.
+      AppLogger.info('Загрузка вложения: $fileName');
+      final uploaded = await _uploadAttachmentUseCase.execute(
+        file: file,
+        localId: localId,
+        localPath: file.path,
+        conversationId: conversationId,
+      );
+
+      // 7. Заменяем pending-версию на done-версию.
+      _replacePendingAttachment(localId, uploaded);
+      AppLogger.info('Вложение загружено: ${uploaded.remoteId}');
+    } catch (e, stackTrace) {
+      // Преобразуем в AppException.
+      // FileException'ы (валидация, ошибки загрузки) уже AppException —
+      // handleFileUpload вернёт их как есть.
+      final appException = ErrorHandler.handleFileUpload(e, stackTrace);
+      AppLogger.logException(
+        'Ошибка прикрепления файла',
+        appException,
+        stackTrace,
+      );
+
+      // Обновляем pending-версию до failed, если она уже была добавлена.
+      if (localId != null) {
+        final failed = state.pendingAttachments
+            .firstWhere(
+              (a) => a.localId == localId,
+              orElse: () =>
+                  throw StateError('pending-вложение исчезло из состояния'),
+            )
+            .copyWith(
+              status: AttachmentStatus.failed,
+              errorMessage: appException.userMessage,
+            );
+        _replacePendingAttachment(localId, failed);
+      }
+
+      _setError(appException.userMessage);
+    } finally {
+      _setAddingAttachment(false);
     }
   }
 
@@ -422,11 +618,14 @@ final uploadAttachmentUseCaseProvider = Provider<UploadAttachmentUseCase>((
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
   final repository = ref.read(chatRepositoryProvider);
   final sendMessageUseCase = ref.read(sendMessageUseCaseProvider);
+  final uploadAttachmentUseCase = ref.read(uploadAttachmentUseCaseProvider);
   final streamHandler = ref.read(chatStreamHandlerProvider);
 
   return ChatNotifier(
+    ref: ref,
     repository: repository,
     sendMessageUseCase: sendMessageUseCase,
+    uploadAttachmentUseCase: uploadAttachmentUseCase,
     streamHandler: streamHandler,
     onSessionChanged: (agentId, sessionId) {
       ref.read(sessionProvider.notifier).setSession(agentId, sessionId);
