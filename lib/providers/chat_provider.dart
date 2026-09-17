@@ -32,6 +32,13 @@ class ChatState {
   /// (или при создании нового чата / очистке).
   final List<Attachment> pendingAttachments;
 
+  /// Нейтральное информационное сообщение для пользователя.
+  ///
+  /// В отличие от [error] — не ошибка, а подсказка или уведомление:
+  /// «Файл уже прикреплён», «Чат создан». UI показывает зелёный/нейтральный
+  /// SnackBar и очищает поле через `clearInfoMessage()`.
+  final String? infoMessage;
+
   const ChatState({
     this.messages = const [],
     this.isLoading = false,
@@ -40,6 +47,7 @@ class ChatState {
     this.currentAgentId,
     this.currentConversationId,
     this.pendingAttachments = const [],
+    this.infoMessage,
   });
 
   factory ChatState.initial() {
@@ -58,6 +66,7 @@ class ChatState {
     Object? currentAgentId = _unset,
     Object? currentConversationId = _unset,
     List<Attachment>? pendingAttachments,
+    Object? infoMessage = _unset,
   }) {
     return ChatState(
       messages: messages ?? this.messages,
@@ -71,6 +80,9 @@ class ChatState {
           ? this.currentConversationId
           : currentConversationId as String?,
       pendingAttachments: pendingAttachments ?? this.pendingAttachments,
+      infoMessage: identical(infoMessage, _unset)
+          ? this.infoMessage
+          : infoMessage as String?,
     );
   }
 
@@ -79,6 +91,9 @@ class ChatState {
 
   /// Есть ли прикреплённые, но ещё не отправленные вложения.
   bool get hasPendingAttachments => pendingAttachments.isNotEmpty;
+
+  /// Есть ли информационное сообщение для показа пользователю.
+  bool get hasInfoMessage => infoMessage != null && infoMessage!.isNotEmpty;
 }
 
 // ============================================================
@@ -141,6 +156,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   void _clearError() {
     state = state.copyWith(error: null);
+  }
+
+  void _setInfoMessage(String? message) {
+    state = state.copyWith(infoMessage: message);
   }
 
   void _addMessage(Message message) {
@@ -366,6 +385,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   void clearError() {
     _clearError();
+  }
+
+  void clearInfoMessage() {
+    _setInfoMessage(null);
   }
 }
 
