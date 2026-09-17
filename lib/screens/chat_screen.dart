@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/logger/app_logger.dart';
 import '../providers/chat_provider.dart';
+import '../theme/app_theme.dart';
+import '../widgets/chat_history_drawer.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
-import '../widgets/chat_history_drawer.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -96,10 +97,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final messages = chatState.messages;
     final isLoading = chatState.isLoading;
     final error = chatState.error;
+    final infoMessage = chatState.infoMessage;
     final currentAgentId = chatState.currentAgentId;
 
-    // Если есть ошибка — показываем SnackBar
+    // Показ SnackBar'ов по состоянию — на следующем кадре,
+    // чтобы не вызывать setState во время build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Ошибка — красный SnackBar.
       if (error != null && error.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -109,6 +113,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
         );
         ref.read(chatProvider.notifier).clearError();
+      }
+
+      // Информационное сообщение — нейтральный SnackBar.
+      if (infoMessage != null && infoMessage.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('ℹ️ $infoMessage'),
+            backgroundColor: AppTheme.primary,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        ref.read(chatProvider.notifier).clearInfoMessage();
       }
     });
 
