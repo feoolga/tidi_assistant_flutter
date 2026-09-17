@@ -461,47 +461,101 @@ class ChatNotifier extends StateNotifier<ChatState> {
   // ОТПРАВКА СООБЩЕНИЯ
   // ============================================================
 
-  Future<void> sendMessage({
-    required String text,
-    String? agentId,
-    String? sessionId,
-  }) async {
+  /// Отправить сообщение в текущем чате.
+  ///
+  /// Логика:
+  /// - Если сессия (agent_id + conversation_id) уже известна — используем её.
+  /// - Если нет — определяем агента через `POST /route`, создаём чат,
+  ///   сохраняем пару в `sessionProvider` и только потом отправляем.
+  ///
+  /// Вложения из `pendingAttachments` передаются в сообщение и в запрос;
+  /// после успешной отправки список очищается.
+  ///
+  /// Защищена от повторного вызова: пока `state.isLoading == true` —
+  /// выходим сразу. UI и так блокирует кнопку, здесь — вторая линия.
+  Future<void> sendMessage({required String text}) async {
+    if (state.isLoading) {
+      AppLogger.warning('Отправка уже в процессе — пропускаем повторный вызов');
+      return;
+    }
+
+    // Снимок актуальных вложений — до любых await, чтобы не потерять их
+    // при возможных изменениях состояния в процессе отправки.
+    final attachments = List<Attachment>.from(state.pendingAttachments);
+
     AppLogger.info(
-      'Отправка сообщения: "$text" (агент=$agentId, чат=$sessionId)',
+      'Отправка сообщения: "$text" '
+      '(вложений: ${attachments.length})',
     );
 
     _clearError();
 
-    // 1. Добавляем сообщение пользователя
-    _addMessage(Message.fromUser(text: text));
+    // 1. Сообщение пользователя — сразу с вложениями, чтобы UI показал превью.
+    _addMessage(Message.fromUser(text: text, attachments: attachments));
     _setLoading(true);
     _setStreaming(true);
 
-    // 2. Создаём ПУСТОЕ сообщение AI
+    // 2. Пустое AI-сообщение — заполнится по мере стрима.
     final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
     final aiMessage = Message(
       id: tempId,
       text: '',
       isFromUser: false,
       timestamp: DateTime.now(),
-      agentId: agentId,
-      sessionId: sessionId,
     );
     _addMessage(aiMessage);
 
     try {
-      // 3. Отправляем запрос и получаем поток DTO
+      // 3. Определяем сессию: либо уже есть, либо создаём на лету.
+      var currentAgentId = _ref.read(sessionProvider).agentId;
+      var currentSessionId = _ref.read(sessionProvider).sessionId;
+
+      if (currentSessionId == null) {
+        // Вложения без сессии — сценарий не должен случаться:
+        // chat создаётся в addAttachment. Если всё-таки пришли сюда —
+        // не создаём документ-чат неявно, а выходим с предупреждением.
+        if (attachments.isNotEmpty) {
+          AppLogger.warning(
+            'Есть вложения, но нет сессии — пропускаем отправку. '
+            'Ожидалось, что чат создан в addAttachment.',
+          );
+          _removeEmptyAiMessageIfAny();
+          return;
+        }
+
+        // Обычный новый чат: определяем агента и создаём чат.
+        AppLogger.info('Новый чат — определяем агента через /route');
+        currentAgentId = await _repository.getRoute(text);
+
+        AppLogger.info('Создаём чат у агента $currentAgentId');
+        final session = await _repository.createConversation(
+          agentId: currentAgentId,
+          title: text,
+        );
+        currentSessionId = session.id;
+
+        // Синхронизируем sessionProvider и локальное состояние.
+        onSessionChanged?.call(currentAgentId, currentSessionId);
+        _setCurrentAgent(currentAgentId);
+        _setCurrentConversationId(currentSessionId);
+
+        AppLogger.info(
+          'Чат создан: agent=$currentAgentId, session=$currentSessionId',
+        );
+      }
+
+      // 4. Отправляем сообщение.
       final params = SendMessageParams(
         text: text,
-        agentId: agentId,
-        sessionId: sessionId,
+        agentId: currentAgentId,
+        sessionId: currentSessionId,
+        attachments: attachments,
       );
 
-      // 4. Оборачиваем в хендлер — теперь работаем с событиями
       final source = _sendMessageUseCase.execute(params);
       final events = _streamHandler.handle(source);
 
-      // 5. Обрабатываем события
+      // 5. Обрабатываем события стрима.
       await for (final event in events) {
         switch (event) {
           case ChatStreamStarted():
@@ -521,15 +575,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
             _updateMessageText(fullText);
             _setStreaming(false);
 
-            // Обновляем метаданные последнего сообщения
             _completeMessage(
               agentId: agentId,
-              sessionId: conversationId ?? sessionId,
+              sessionId: conversationId ?? currentSessionId,
               messageId: messageId,
             );
 
-            // Обновляем состояние сессии (AppBar)
-            _setCurrentAgent(agentId);
+            if (agentId != null) {
+              _setCurrentAgent(agentId);
+            }
             if (conversationId != null) {
               _setCurrentConversationId(conversationId);
             }
@@ -540,24 +594,27 @@ class ChatNotifier extends StateNotifier<ChatState> {
             AppLogger.debug('   📌 ID сообщения: $messageId');
             AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
 
-            // Уведомляем о смене сессии, если она изменилась
-            if (conversationId != null &&
-                (agentId != sessionId || conversationId != sessionId)) {
-              onSessionChanged?.call(agentId ?? '', conversationId);
+            // Уведомляем о смене сессии, если она изменилась.
+            if (conversationId != null && agentId != null) {
+              onSessionChanged?.call(agentId, conversationId);
             }
+
+            // Отправка прошла — вложения «переехали» в историю сообщений.
+            // Из pending их убираем, чтобы не улетели со следующим вопросом.
+            _clearPendingAttachments();
             break;
 
           case ChatStreamFailed(:final error):
             AppLogger.logException('Ошибка в стриме', error);
             _removeEmptyAiMessageIfAny();
             _setError(error.userMessage);
+            // pendingAttachments НЕ очищаем — пользователь может попробовать снова.
             break;
         }
       }
-    } catch (e) {
-      // На всякий случай — если что-то упадёт вне хендлера
+    } catch (e, stackTrace) {
       final appException = ErrorHandler.handle(e);
-      AppLogger.logException('Ошибка в sendMessage', appException);
+      AppLogger.logException('Ошибка в sendMessage', appException, stackTrace);
       _removeEmptyAiMessageIfAny();
       _setError(appException.userMessage);
     } finally {

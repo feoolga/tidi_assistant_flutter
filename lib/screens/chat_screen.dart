@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/logger/app_logger.dart';
 import '../providers/chat_provider.dart';
-import '../providers/session_provider.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/chat_history_drawer.dart';
@@ -68,18 +67,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // ============================================================
 
   void _sendMessage(String text) {
-    // Берем сессию из провайдера
-    final sessionState = ref.read(sessionProvider);
-
     // Отправляем сообщение
-    ref
-        .read(chatProvider.notifier)
-        .sendMessage(
-          text: text,
-          agentId: sessionState.agentId,
-          sessionId: sessionState.sessionId,
-        );
-
+    ref.read(chatProvider.notifier).sendMessage(text: text);
     Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }
 
