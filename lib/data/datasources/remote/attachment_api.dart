@@ -23,12 +23,16 @@ class AttachmentApi {
   // 1. ЗАГРУЗКА ФАЙЛА
   // ============================================================
 
-  /// POST /v1/files — загрузить документ.
+  /// POST /agents/document_chat/v1/files — загрузить документ.
   ///
-  /// Бэкенд (`document_chat`) синхронно прогоняет файл через MinerU
-  /// (OCR + разбор в markdown) прямо в этом вызове. Поэтому таймаут —
-  /// до 10 минут (см. `AppConfig.uploadTimeout`, применяется внутри
-  /// `postMultipart`).
+  /// Загрузка идёт через мастер в агента `document_chat` по generic proxy
+  /// `/agents/{agent_id}/...`. Путь захардкожен: файлы на текущем этапе
+  /// поддерживает только `document_chat` (см. README Master Router,
+  /// раздел «Generic proxy агента» и «Если пользователь прикладывает файл»).
+  ///
+  /// Бэкенд синхронно прогоняет файл через MinerU (OCR + разбор в markdown)
+  /// прямо в этом вызове. Поэтому таймаут — до 10 минут
+  /// (см. `AppConfig.uploadTimeout`, применяется внутри `postMultipart`).
   ///
   /// [conversationId] — опциональная привязка файла к чату.
   /// Если задан, файл в форме Responses будет автоматически
@@ -36,6 +40,7 @@ class AttachmentApi {
   /// (см. README `document_chat`).
   ///
   /// Возвращает сырой ответ — вызывающий код сам смотрит статус.
+  ///
   Future<http.Response> uploadFile({
     required File file,
     String? conversationId,
@@ -47,6 +52,10 @@ class AttachmentApi {
         ? <String, String>{'conversation_id': conversationId}
         : null;
 
-    return _httpClient.postMultipart('/v1/files', file: file, fields: fields);
+    return _httpClient.postMultipart(
+      '/agents/document_chat/v1/files',
+      file: file,
+      fields: fields,
+    );
   }
 }

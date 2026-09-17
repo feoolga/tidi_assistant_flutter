@@ -1,7 +1,7 @@
 // lib/data/repositories/chat_repository.dart
 
 import 'dart:convert';
-import 'package:http/http.dart' as http; // ← ДОБАВИТЬ ЭТУ СТРОКУ!
+import 'package:http/http.dart' as http;
 import '../datasources/remote/chat_api.dart';
 import '../../domain/models/agent.dart';
 import '../../domain/models/chat_session.dart';
@@ -234,7 +234,6 @@ class ChatRepository {
   // 5. РАБОТА С СООБЩЕНИЯМИ
   // ============================================================
 
-  /// Отправить сообщение и получить сырой SSE-поток.
   /// Отправить сообщение и получить сырой SSE-поток.
   ///
   /// [attachments] — уже загруженные вложения (`status: done`,

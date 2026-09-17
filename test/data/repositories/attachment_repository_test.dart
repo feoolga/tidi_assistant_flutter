@@ -173,7 +173,10 @@ void main() {
       );
 
       expect(capturedRequest.method, 'POST');
-      expect(capturedRequest.url.path, endsWith('/v1/files'));
+      expect(
+        capturedRequest.url.path,
+        endsWith('/agents/document_chat/v1/files'),
+      );
       expect(capturedRequest.headers['X-User-Id'], isNotNull);
 
       final contentType = capturedRequest.headers['content-type'] ?? '';
