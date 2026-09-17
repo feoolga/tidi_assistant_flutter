@@ -34,7 +34,7 @@ class AttachmentMapper {
   }) {
     // 1. Определяем MIME по имени файла.
     //    В ответе сервера MIME-тип не приходит — только filename.
-    final mimeType = _mimeFromFilename(dto.filename);
+    final mimeType = attachmentMimeTypeFromFilename(dto.filename);
 
     // 2. Определяем доменный статус — из processing_status,
     //    а НЕ из status. См. README бэкендера: status — сведённое
@@ -69,22 +69,6 @@ class AttachmentMapper {
   // ============================================================
   // ПРИВАТНЫЕ ХЕЛПЕРЫ
   // ============================================================
-
-  /// Определить MIME-тип по имени файла.
-  ///
-  /// Смотрим только на расширение — файл уже на сервере, доверяем
-  /// тому, что он туда попал легально. Если расширение неизвестно —
-  /// `application/octet-stream`.
-  static String _mimeFromFilename(String filename) {
-    final lower = filename.toLowerCase();
-
-    if (lower.endsWith('.pdf')) return 'application/pdf';
-    if (lower.endsWith('.jpg')) return 'image/jpeg';
-    if (lower.endsWith('.jpeg')) return 'image/jpeg';
-    if (lower.endsWith('.png')) return 'image/png';
-
-    return 'application/octet-stream';
-  }
 
   /// Перевести `processing_status` (строка от сервера) в [AttachmentStatus].
   ///

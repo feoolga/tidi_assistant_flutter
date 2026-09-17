@@ -246,8 +246,33 @@ class Attachment {
 }
 
 // ============================================================
-// ПРИВАТНЫЕ ХЕЛПЕРЫ
+// ХЕЛПЕРЫ: MIME и kind
 // ============================================================
+
+/// Определить MIME-тип по имени файла.
+///
+/// Публичная функция (не метод класса), потому что используется:
+/// - в `AttachmentMapper` — при переводе ответа сервера в домен;
+/// - в `ChatNotifier.addAttachment` — при валидации локального файла
+///   до загрузки (по `AppConfig.allowedMimeTypes`).
+///
+/// Смотрим только на расширение: файл либо уже на сервере (маппер),
+/// либо только что выбран пользователем (валидация). Оба раза расширение
+/// — единственный доступный источник информации о типе.
+///
+/// Если расширение неизвестно — возвращаем `application/octet-stream`.
+/// Валидация по `AppConfig.allowedMimeTypes` отсеет такие файлы
+/// до загрузки, так что до сервера они не дойдут.
+String attachmentMimeTypeFromFilename(String filename) {
+  final lower = filename.toLowerCase();
+
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.jpg')) return 'image/jpeg';
+  if (lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.png')) return 'image/png';
+
+  return 'application/octet-stream';
+}
 
 /// Определить [AttachmentKind] по MIME-типу.
 ///
