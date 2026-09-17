@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/logger/app_logger.dart';
 import '../domain/models/chat_session.dart';
 import '../providers/chat_list_provider.dart';
 import '../domain/models/agent.dart';
@@ -35,6 +36,11 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
     final chats = ref.watch(allChatsProvider);
     final isLoading = ref.watch(chatListLoadingProvider);
     final error = ref.watch(chatListErrorProvider);
+
+    AppLogger.debug(
+      '📂 ChatHistoryDrawer.build: _isLoaded=$_isLoaded, '
+      'chats=${chats.length}, isLoading=$isLoading',
+    );
 
     // 👇 ЗАГРУЖАЕМ ТОЛЬКО ОДИН РАЗ
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -112,11 +118,14 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
   // ============================================================
 
   void _loadChats() {
+    AppLogger.debug('📂 ChatHistoryDrawer._loadChats вызван');
     final agentsState = ref.read(agentsProvider);
     if (agentsState is AsyncData<List<Agent>>) {
       final notifier = ref.read(chatListNotifierProvider.notifier);
       notifier.updateAgents(agentsState.value);
       notifier.loadAllChats(agentsState.value);
+    } else {
+      AppLogger.debug('📂 agentsProvider ещё не готов: $agentsState');
     }
   }
 

@@ -177,6 +177,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   void _setError(String? error) {
+    if (error != null) {
+      AppLogger.debug('🔴 ChatNotifier._setError("$error")');
+    }
     state = state.copyWith(error: error);
   }
 

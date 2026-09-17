@@ -78,6 +78,9 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
   }
 
   void _setError(String? error) {
+    if (error != null) {
+      AppLogger.debug('🔵 ChatListNotifier._setError("$error")');
+    }
     state = state.copyWith(error: error);
   }
 

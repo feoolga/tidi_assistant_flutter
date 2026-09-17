@@ -92,6 +92,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    AppLogger.debug('🖼️ ChatScreen.build');
     // Подписываемся на состояние чата
     final chatState = ref.watch(chatProvider);
     final messages = chatState.messages;
@@ -105,6 +106,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Ошибка — красный SnackBar.
       if (error != null && error.isNotEmpty) {
+        AppLogger.debug('🔔 SnackBar.error("$error")');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('❌ $error'),
