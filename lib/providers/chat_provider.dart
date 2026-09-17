@@ -214,6 +214,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
     state = state.copyWith(pendingAttachments: newList);
   }
 
+  /// Удалить вложение из `pendingAttachments` по `localId`.
+  ///
+  /// Если вложение не найдено — состояние не трогаем (чтобы не вызывать
+  /// лишний rebuild у слушателей). Используется в публичном
+  /// [removeAttachment] и при очистке чата.
+  void _removePendingAttachment(String localId) {
+    final current = state.pendingAttachments;
+    final newList = current.where((a) => a.localId != localId).toList();
+
+    // Ничего не удалили — не трогаем состояние.
+    if (newList.length == current.length) return;
+
+    state = state.copyWith(pendingAttachments: newList);
+  }
+
   /// Обновляет текст последнего сообщения AI
   void _updateMessageText(String text) {
     final currentMessages = state.messages;
@@ -419,6 +434,29 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// Удалить прикреплённый файл из `pendingAttachments` по `localId`.
+  ///
+  /// Файл на сервере НЕ удаляем: он привязан к чату и продолжит жить
+  /// (см. README `document_chat` — файл живёт до конца чата). Локально
+  /// же он уходит из списка «на отправку» и больше не попадёт
+  /// в следующее сообщение.
+  ///
+  /// Позже, если понадобится — можно добавить вызов
+  /// `DELETE /agents/document_chat/v1/files/{id}` здесь.
+  void removeAttachment(String localId) {
+    AppLogger.info('Удаление вложения: $localId');
+    _removePendingAttachment(localId);
+  }
+
+  /// Полностью очистить список прикреплённых файлов.
+  ///
+  /// Используется при создании нового чата и очистке — чтобы вложения
+  /// из предыдущего чата не «утекли» в новый.
+  void _clearPendingAttachments() {
+    if (state.pendingAttachments.isEmpty) return;
+    state = state.copyWith(pendingAttachments: const []);
+  }
+
   // ============================================================
   // ОТПРАВКА СООБЩЕНИЯ
   // ============================================================
@@ -566,6 +604,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _clearError();
     _setCurrentAgent(null);
     _setCurrentConversationId(null);
+    _clearPendingAttachments();
 
     AppLogger.debug('Новый чат создан');
   }
@@ -577,6 +616,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _addWelcomeMessage();
     _clearError();
     _setCurrentConversationId(null);
+    _clearPendingAttachments();
   }
 
   void clearError() {
