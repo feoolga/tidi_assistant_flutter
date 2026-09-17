@@ -1,7 +1,9 @@
 // lib/widgets/message_bubble.dart
 import 'package:flutter/material.dart';
+import '../domain/models/attachment.dart';
 import '../domain/models/message.dart';
 import '../theme/app_theme.dart';
+import 'attachment_preview.dart';
 import 'typing_indicator.dart';
 import '../core/logger/app_logger.dart';
 
@@ -83,24 +85,29 @@ class MessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // УСЛОВНЫЙ РЕНДЕРИНГ:
-                // Если showTypingIndicator — показываем точки
-                // Иначе — показываем текст
+                // Текст или индикатор набора.
                 if (showTypingIndicator)
-                  const TypingIndicator() // ← ИСПОЛЬЗУЕМ НОВЫЙ ВИДЖЕТ
-                else
+                  const TypingIndicator()
+                else if (message.text.isNotEmpty)
                   Text(
                     message.text,
-                    style: TextStyle(
-                      color: isFromUser
-                          ? AppTheme.textPrimary
-                          : AppTheme.textPrimary,
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
                       fontSize: 16,
                       height: 1.4,
                     ),
                   ),
+
+                // Вложения — если есть. Идут под текстом, над временем.
+                if (message.attachments.isNotEmpty) ...[
+                  if (showTypingIndicator || message.text.isNotEmpty)
+                    const SizedBox(height: 8),
+                  _buildAttachments(message.attachments),
+                ],
+
                 const SizedBox(height: 4),
-                // Время показываем только если есть текст
+
+                // Время.
                 if (!showTypingIndicator)
                   Text(
                     _formatTime(message.timestamp),
@@ -121,5 +128,26 @@ class MessageBubble extends StatelessWidget {
 
   String _formatTime(DateTime time) {
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+  }
+
+  /// Превью вложений внутри сообщения — компактный вид, без кнопки удаления.
+  ///
+  /// `Wrap` вместо `Row`: если файлов несколько и они не влезают по ширине,
+  /// автоматически переносим на следующую строку. Компактный размер (60×60)
+  /// выбран, чтобы превью не «съедало» пузырь сообщения.
+  Widget _buildAttachments(List<Attachment> attachments) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final attachment in attachments)
+          AttachmentPreview(
+            attachment: attachment,
+            compact: true,
+            // В отправленном сообщении удалять вложения нельзя — сервер
+            // уже принял их; onRemove оставляем null.
+          ),
+      ],
+    );
   }
 }
