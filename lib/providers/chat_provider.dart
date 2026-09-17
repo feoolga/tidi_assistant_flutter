@@ -3,7 +3,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/logger/app_logger.dart';
 import '../domain/models/message.dart';
-
+import '../domain/models/attachment.dart';
 import '../domain/services/chat_stream_event.dart';
 import '../domain/services/chat_stream_handler.dart';
 import '../domain/usecases/send_message_usecase.dart';
@@ -26,6 +26,12 @@ class ChatState {
   final String? currentAgentId;
   final String? currentConversationId;
 
+  /// Вложения, уже загруженные на сервер, но ещё не отправленные
+  /// с сообщением. Появляются, когда пользователь нажимает «прикрепить»
+  /// и файл успешно загружается. Очищаются после отправки сообщения
+  /// (или при создании нового чата / очистке).
+  final List<Attachment> pendingAttachments;
+
   const ChatState({
     this.messages = const [],
     this.isLoading = false,
@@ -33,6 +39,7 @@ class ChatState {
     this.isStreaming = false,
     this.currentAgentId,
     this.currentConversationId,
+    this.pendingAttachments = const [],
   });
 
   factory ChatState.initial() {
@@ -50,6 +57,7 @@ class ChatState {
     bool? isStreaming,
     Object? currentAgentId = _unset,
     Object? currentConversationId = _unset,
+    List<Attachment>? pendingAttachments,
   }) {
     return ChatState(
       messages: messages ?? this.messages,
@@ -62,11 +70,15 @@ class ChatState {
       currentConversationId: identical(currentConversationId, _unset)
           ? this.currentConversationId
           : currentConversationId as String?,
+      pendingAttachments: pendingAttachments ?? this.pendingAttachments,
     );
   }
 
   bool get hasMessages => messages.isNotEmpty;
   bool get hasError => error != null && error!.isNotEmpty;
+
+  /// Есть ли прикреплённые, но ещё не отправленные вложения.
+  bool get hasPendingAttachments => pendingAttachments.isNotEmpty;
 }
 
 // ============================================================
