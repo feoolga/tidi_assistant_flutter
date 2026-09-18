@@ -189,11 +189,48 @@ void main() {
   // ============================================================
 
   group('ошибки сервера', () {
+    test('413 → FileException.tooLargeFromServer', () async {
+      final mockClient = MockClient((request) async {
+        return jsonResponse(errorJson('Файл слишком большой'), 413);
+      });
+
+      final repo = makeRepository(mockClient);
+
+      expect(
+        () => repo.upload(
+          file: testFile,
+          localId: 'local-1',
+          localPath: testFile.path,
+        ),
+        throwsA(
+          isA<FileException>()
+              .having((e) => e.code, 'code', 'FILE_TOO_LARGE_FROM_SERVER')
+              .having(
+                (e) => e.technicalDetails,
+                'technicalDetails',
+                'Файл слишком большой',
+              ),
+        ),
+      );
+    });
+
     test(
-      '413 → FileException с текстом от сервера в технических деталях',
+      '413 с actual_bytes/max_bytes → FileException.tooLarge с цифрами',
       () async {
         final mockClient = MockClient((request) async {
-          return jsonResponse(errorJson('Файл слишком большой'), 413);
+          return jsonResponse(
+            jsonEncode({
+              'error': {
+                'message': 'File too large',
+                'type': 'invalid_request_error',
+                'param': null,
+                'code': null,
+                'actual_bytes': 30000000,
+                'max_bytes': 25000000,
+              },
+            }),
+            413,
+          );
         });
 
         final repo = makeRepository(mockClient);
@@ -206,18 +243,18 @@ void main() {
           ),
           throwsA(
             isA<FileException>()
-                .having((e) => e.code, 'code', 'FILE_UPLOAD_FAILED')
+                .having((e) => e.code, 'code', 'FILE_TOO_LARGE')
                 .having(
-                  (e) => e.technicalDetails,
-                  'technicalDetails',
-                  contains('Файл слишком большой'),
+                  (e) => e.userMessage,
+                  'userMessage',
+                  contains('28.6'), // 30000000 байт ≈ 28.6 МБ
                 ),
           ),
         );
       },
     );
 
-    test('502 → FileException с текстом от MinerU', () async {
+    test('502 → FileException.processingFailed', () async {
       final mockClient = MockClient((request) async {
         return jsonResponse(
           errorJson('Не удалось обработать документ: timeout'),
@@ -235,7 +272,7 @@ void main() {
         ),
         throwsA(
           isA<FileException>()
-              .having((e) => e.code, 'code', 'FILE_UPLOAD_FAILED')
+              .having((e) => e.code, 'code', 'FILE_PROCESSING_FAILED')
               .having(
                 (e) => e.technicalDetails,
                 'technicalDetails',
@@ -245,7 +282,7 @@ void main() {
       );
     });
 
-    test('400 → FileException', () async {
+    test('400 → FileException.notReady', () async {
       final mockClient = MockClient((request) async {
         return jsonResponse(errorJson('Bad request'), 400);
       });
@@ -259,38 +296,61 @@ void main() {
           localPath: testFile.path,
         ),
         throwsA(
-          isA<FileException>().having(
-            (e) => e.code,
-            'code',
-            'FILE_UPLOAD_FAILED',
-          ),
+          isA<FileException>().having((e) => e.code, 'code', 'FILE_NOT_READY'),
         ),
       );
     });
 
-    test('ошибка без JSON в теле — тоже FileException', () async {
-      // Например, nginx вернул HTML на 502
-      final mockClient = MockClient((request) async {
-        return jsonResponse('<html>502 Bad Gateway</html>', 502);
-      });
+    test(
+      '502 с HTML в теле (nginx) → FileException.processingFailed',
+      () async {
+        // nginx вернул HTML на 502. Мы классифицируем по статусу,
+        // а не по телу — 502 всегда означает "MinerU упал".
+        final mockClient = MockClient((request) async {
+          return jsonResponse('<html>502 Bad Gateway</html>', 502);
+        });
 
-      final repo = makeRepository(mockClient);
+        final repo = makeRepository(mockClient);
 
-      expect(
-        () => repo.upload(
-          file: testFile,
-          localId: 'local-1',
-          localPath: testFile.path,
-        ),
-        throwsA(
-          isA<FileException>().having(
-            (e) => e.code,
-            'code',
-            'FILE_UPLOAD_FAILED',
+        expect(
+          () => repo.upload(
+            file: testFile,
+            localId: 'local-1',
+            localPath: testFile.path,
           ),
-        ),
-      );
+          throwsA(
+            isA<FileException>().having(
+              (e) => e.code,
+              'code',
+              'FILE_PROCESSING_FAILED',
+            ),
+          ),
+        );
+      },
+    );
+  });
+
+  test('415 → FileException.unsupportedFormat', () async {
+    final mockClient = MockClient((request) async {
+      return jsonResponse(errorJson('Unsupported media type'), 415);
     });
+
+    final repo = makeRepository(mockClient);
+
+    expect(
+      () => repo.upload(
+        file: testFile,
+        localId: 'local-1',
+        localPath: testFile.path,
+      ),
+      throwsA(
+        isA<FileException>().having(
+          (e) => e.code,
+          'code',
+          'FILE_UNSUPPORTED_FORMAT',
+        ),
+      ),
+    );
   });
 
   // ============================================================

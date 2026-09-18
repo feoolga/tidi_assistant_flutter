@@ -62,46 +62,67 @@ class ErrorHandler {
   /// загрузки файла он должен видеть не «сервер не отвечает», а
   /// «не удалось загрузить файл».
   ///
-  /// ВАЖНО: этот метод НЕ разбирает HTTP-статусы (413, 400, 502, ...).
-  /// Их должен обработать вызывающий код (`AttachmentRepository`),
-  /// потому что статус-код — не исключение, а поле ответа.
-  /// Здесь мы ловим именно **исключения**: сеть, таймаут, парсинг.
+  /// **Что делает:**
+  /// - [FileException] пропускает как есть — это уже готовый результат;
+  /// - [NetworkException] переводит в [FileException.uploadFailed]
+  ///   (в контексте загрузки файла «нет сети» = «не удалось загрузить»);
+  /// - [ServerException] переводит в [FileException.uploadFailed]
+  ///   (это fallback — обычно `AttachmentRepository` разбирает
+  ///   `ServerException` сам по статусам);
+  /// - прочие [AppException] (бизнес-исключения) пропускает;
+  /// - `http.ClientException`, `TimeoutException`, `FormatException`
+  ///   и всё остальное — переводит в [FileException.uploadFailed].
+  ///
+  /// **Чего не делает:**
+  /// Не разбирает HTTP-статусы (413, 400, 502) — это работа
+  /// `AttachmentRepository`, у которого есть контекст операции.
   static AppException handleFileUpload(
     dynamic error, [
     StackTrace? stackTrace,
   ]) {
-    // Если это уже AppException — возвращаем как есть.
-    //
-    // Сюда попадут FileException.tooLarge, unsupportedFormat и т.д.,
-    // которые уже были брошены выше по стеку (например, при валидации
-    // файла до отправки). Мы не должны перезаписывать их общей ошибкой.
+    // 1. FileException — уже готовый результат, пропускаем.
+    //    Сюда попадают: валидация до отправки, классификаторы в репозитории.
+    if (error is FileException) {
+      return error;
+    }
+
+    // 2. NetworkException — переводим в uploadFailed.
+    //    Ключевой случай: клиент бросает NetworkException, но
+    //    в контексте загрузки файла пользователь должен увидеть
+    //    «не удалось загрузить файл», а не «нет соединения».
+    if (error is NetworkException) {
+      return FileException.uploadFailed(error);
+    }
+
+    // 3. ServerException — fallback.
+    //    Репозиторий обычно разбирает ServerException сам (по статусам),
+    //    но если не разобрал (неизвестный статус) — превращаем в общий.
+    if (error is ServerException) {
+      return FileException.uploadFailed(error);
+    }
+
+    // 4. Прочие AppException — пропускаем.
+    //    Например, BusinessException — в контексте загрузки файла
+    //    они не должны появляться, но если появились — не глушим.
     if (error is AppException) {
       return error;
     }
 
-    // Сетевые проблемы — для пользователя это «не удалось загрузить файл»
+    // 5. Транспортные и парсинговые — на случай, если что-то
+    //    не обёрнуто клиентом.
     if (error is http.ClientException) {
       return FileException.uploadFailed(error);
     }
-
-    // Таймаут загрузки (файл большой, MinerU долго разбирает)
     if (error is TimeoutException) {
       return FileException.uploadFailed(error);
     }
-
-    // Невалидный JSON в ответе — тоже считаем провалом загрузки
     if (error is FormatException) {
       return FileException.uploadFailed(error);
     }
 
-    // Всё остальное — тоже провал загрузки.
-    //
-    // Не используем UnknownException: в узком контексте загрузки файла
-    // для пользователя любая неожиданная проблема — это «не удалось
-    // загрузить файл». Обобщение здесь уместно.
+    // 6. Всё остальное — общий uploadFailed.
     return FileException.uploadFailed(error);
   }
-
   // ============================================================
   // 3. БРОСАНИЕ
   // ============================================================
