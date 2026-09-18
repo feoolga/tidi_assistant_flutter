@@ -10,6 +10,7 @@ import '../config/app_config.dart';
 import '../errors/network_exceptions.dart';
 import '../errors/server_exceptions.dart';
 import '../logger/app_logger.dart';
+import 'http_error_builder.dart';
 
 /// Единый HTTP-клиент для всех запросов к API.
 ///
@@ -160,7 +161,7 @@ class AppHttpClient {
         final bodyString = await response.stream.bytesToString();
         _logHttpError(response.statusCode, bodyString);
 
-        throw _buildServerException(
+        throw _buildServerExceptionFromBody(
           statusCode: response.statusCode,
           bodyString: bodyString,
         );
@@ -333,60 +334,40 @@ class AppHttpClient {
 
   /// Проверяет статус ответа и бросает [ServerException] при `>= 400`.
   ///
-  /// Тело ошибки пытается распарсить как JSON — чтобы вытащить
-  /// `error.message` и `error.code`, которые кладёт бэкенд.
-  /// Если тело не JSON (например, HTML от nginx) — вернёт `null`.
+  /// Делегирует создание исключения в [HttpErrorBuilder] —
+  /// единую точку создания `ServerException` в приложении.
   void _throwIfError(http.Response response) {
     if (response.statusCode < 400) return;
 
     _logHttpError(response.statusCode, response.body);
 
-    throw _buildServerException(
-      statusCode: response.statusCode,
-      bodyString: response.body,
-    );
+    throw HttpErrorBuilder.fromResponse(response);
   }
 
-  /// Собирает [ServerException] по статусу и телу ответа.
+  /// Создаёт [ServerException] из статуса и **строки** тела.
   ///
-  /// Делает **разделение по классу статуса**:
-  /// - `4xx` → `clientError` (ошибка клиента: неправильный запрос,
-  ///   нет доступа, не найдено);
-  /// - `5xx` → `serverError` (ошибка сервера: сломалось, перегрузка).
+  /// Нужен **только** для `postStream`: там тело ошибки читается
+  /// через `response.stream.bytesToString()` — это **строка**, а не
+  /// готовый `http.Response`. `HttpErrorBuilder.fromResponse` требует
+  /// `http.Response`, которого у нас нет. Поэтому — строим `Response`
+  /// вручную и передаём в билдер.
   ///
-  /// Разные фабрики дают разные `userMessage` — это важно для UI.
-  /// Технические детали (`body`) кладутся в `responseBody` — их увидит
-  /// репозиторий, но не пользователь.
-  ServerException _buildServerException({
+  /// **Почему не отдельный метод билдера:** это **тонкий** случай,
+  /// он нужен **только** в `postStream`. Держать его локально —
+  /// правильнее, чем раздувать публичный API `HttpErrorBuilder`.
+  ServerException _buildServerExceptionFromBody({
     required int statusCode,
     required String bodyString,
   }) {
-    final parsedBody = _tryParseJson(bodyString);
-
-    if (statusCode >= 500) {
-      return ServerException.serverError(
-        statusCode: statusCode,
-        body: parsedBody,
-      );
-    }
-    return ServerException.clientError(
-      statusCode: statusCode,
-      body: parsedBody,
+    // Собираем искусственный http.Response, чтобы переиспользовать
+    // логику HttpErrorBuilder.fromResponse.
+    final fakeResponse = http.Response(
+      bodyString,
+      statusCode,
+      headers: const {'content-type': 'application/json; charset=utf-8'},
     );
-  }
 
-  /// Пытается распарсить тело как JSON-объект.
-  ///
-  /// Возвращает `null`, если тело пустое, не JSON или это не объект.
-  /// **Никогда не бросает** — используется для диагностики, а не для логики.
-  Map<String, dynamic>? _tryParseJson(String body) {
-    if (body.isEmpty) return null;
-    try {
-      final decoded = jsonDecode(body);
-      return decoded is Map<String, dynamic> ? decoded : null;
-    } catch (_) {
-      return null;
-    }
+    return HttpErrorBuilder.fromResponse(fakeResponse);
   }
 
   /// Логирует HTTP-ошибку с телом (обрезанным до 200 символов).
