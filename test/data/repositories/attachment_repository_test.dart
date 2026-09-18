@@ -328,29 +328,29 @@ void main() {
         );
       },
     );
-  });
 
-  test('415 → FileException.unsupportedFormat', () async {
-    final mockClient = MockClient((request) async {
-      return jsonResponse(errorJson('Unsupported media type'), 415);
-    });
+    test('415 → FileException.unsupportedFormat', () async {
+      final mockClient = MockClient((request) async {
+        return jsonResponse(errorJson('Unsupported media type'), 415);
+      });
 
-    final repo = makeRepository(mockClient);
+      final repo = makeRepository(mockClient);
 
-    expect(
-      () => repo.upload(
-        file: testFile,
-        localId: 'local-1',
-        localPath: testFile.path,
-      ),
-      throwsA(
-        isA<FileException>().having(
-          (e) => e.code,
-          'code',
-          'FILE_UNSUPPORTED_FORMAT',
+      expect(
+        () => repo.upload(
+          file: testFile,
+          localId: 'local-1',
+          localPath: testFile.path,
         ),
-      ),
-    );
+        throwsA(
+          isA<FileException>().having(
+            (e) => e.code,
+            'code',
+            'FILE_UNSUPPORTED_FORMAT',
+          ),
+        ),
+      );
+    });
   });
 
   // ============================================================
