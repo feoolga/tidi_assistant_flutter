@@ -6,6 +6,7 @@ import 'dart:io';
 void main() {
   final projectRoot = Directory.current.path;
   final libPath = '$projectRoot/lib';
+  final testPath = '$projectRoot/test';
 
   print('\n📁 Структура папки lib:\n');
   print('lib/');
@@ -14,6 +15,15 @@ void main() {
     _printDirectory(libPath, '  ');
   } else {
     print('  ⚠️ Папка lib не найдена!');
+  }
+
+  print('\n📁 Структура папки test:\n');
+  print('test/');
+
+  if (Directory(testPath).existsSync()) {
+    _printDirectory(testPath, '  ');
+  } else {
+    print('  ⚠️ Папка test не найдена!');
   }
 
   print('\n📄 Также есть файлы в корне:');

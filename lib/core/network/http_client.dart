@@ -1,132 +1,137 @@
 // lib/core/network/http_client.dart
 
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
-import 'package:http/http.dart' as http;
-import '../config/app_config.dart';
-import '../logger/app_logger.dart';
-import '../errors/error_handler.dart';
-import '../errors/network_exceptions.dart';
 
-/// Единый HTTP клиент для всех запросов к API.
+import 'package:http/http.dart' as http;
+
+import '../config/app_config.dart';
+import '../errors/network_exceptions.dart';
+import '../errors/server_exceptions.dart';
+import '../logger/app_logger.dart';
+
+/// Единый HTTP-клиент для всех запросов к API.
 ///
-/// Все сервисы используют этот клиент вместо прямых вызовов http.
-/// Это позволяет:
-/// 1. Не дублировать заголовки и URL в каждом сервисе
-/// 2. Централизованно логировать все запросы
-/// 3. Единообразно обрабатывать ошибки
-/// 4. Легко заменить реализацию (например, на dio)
+/// Архитектурная роль: **транспорт + базовый протокол**.
+/// Клиент умеет:
+/// - собирать URL и заголовки;
+/// - ставить таймауты;
+/// - превращать транспортные ошибки (нет сети, таймаут) в NetworkException;
+/// - превращать HTTP-ошибки (>= 400) в ServerException.
+///
+/// Клиент **не знает** про домен: ни про агентов, ни про чаты, ни про файлы.
+/// Никаких бизнес-решений («404 здесь — это ок») он не принимает.
+/// Это работа репозитория.
+///
+/// Политика по статус-кодам:
+/// - `get` / `post` / `patch` / `delete` — бросают [ServerException] на `>= 400`.
+/// - `postStream` — бросает [ServerException] на `>= 400`, читая тело ошибки
+///   (до возврата, пока ответ ещё не отдан в парсер SSE).
+/// - `postMultipart` — **не бросает**. Возвращает [http.Response] как есть,
+///   потому что статусы 4xx/5xx здесь — часть бизнес-протокола загрузки файлов
+///   (413 = «файл большой», 502 = «MinerU упал», 400 = «файл ещё обрабатывается»).
+///   Разбор статусов — задача AttachmentRepository.
 class AppHttpClient {
   // ============================================================
   // 1. ВНУТРЕННИЙ КЛИЕНТ
   // ============================================================
 
-  /// Внутренний HTTP клиент.
+  /// Внутренний HTTP-клиент.
   ///
-  /// Используем один экземпляр на всё приложение —
-  /// это позволяет переиспользовать соединения (keep-alive).
+  /// Один экземпляр на всё приложение — переиспользует TCP-соединения
+  /// (keep-alive), что заметно быстрее на мобильных сетях.
   final http.Client _client;
 
   // ============================================================
   // 2. КОНСТРУКТОР
   // ============================================================
 
-  /// Создает клиент с настройками из AppConfig.
+  /// Создаёт клиент.
   ///
   /// [client] — опциональный HTTP-клиент. Если не передан — создаётся
   /// реальный `http.Client()`. Параметр нужен для тестов: подменяем
-  /// клиент на `MockClient` из `package:http/testing.dart`, чтобы
-  /// не ходить в реальный сервер.
+  /// на `MockClient` из `package:http/testing.dart`, чтобы не ходить
+  /// в реальный сервер.
   AppHttpClient({http.Client? client}) : _client = client ?? http.Client();
 
   // ============================================================
-  // 3. ОСНОВНЫЕ МЕТОДЫ
+  // 3. ПУБЛИЧНЫЕ МЕТОДЫ — ОБЫЧНЫЕ ЗАПРОСЫ
   // ============================================================
 
-  /// GET-запрос.
-  ///
-  /// Пример использования:
-  /// ```dart
-  /// final response = await client.get('/v1/models');
-  /// ```
-  Future<http.Response> get(String path, {Map<String, String>? headers}) async {
-    final uri = _buildUri(path);
-    final allHeaders = _mergeHeaders(headers);
-
-    AppLogger.info('GET $uri');
-
-    try {
-      final response = await _client
-          .get(uri, headers: allHeaders)
-          .timeout(AppConfig.timeout);
-
-      AppLogger.debug('GET ${response.statusCode}');
-      _logResponse(response);
-
-      return response;
-    } on TimeoutException {
-      AppLogger.error('Таймаут при выполнении GET-запроса: $path');
-      throw NetworkException.timeout();
-    } catch (e, stackTrace) {
-      AppLogger.error(
-        'Ошибка при выполнении GET-запроса: $path',
-        e,
-        stackTrace,
-      );
-      throw ErrorHandler.handle(e);
-    }
+  /// GET-запрос. Бросает [ServerException] на `>= 400`.
+  Future<http.Response> get(String path, {Map<String, String>? headers}) {
+    return _executeRequest(
+      method: 'GET',
+      path: path,
+      send: () => _client.get(_buildUri(path), headers: _mergeHeaders(headers)),
+    );
   }
 
-  /// POST-запрос с JSON-телом.
-  ///
-  /// Пример использования:
-  /// ```dart
-  /// final body = {'model': 'auto', 'messages': [...]};
-  /// final response = await client.post('/v1/chat/completions', body: body);
-  /// ```
+  /// POST-запрос с JSON-телом. Бросает [ServerException] на `>= 400`.
   Future<http.Response> post(
     String path, {
     Map<String, dynamic>? body,
     Map<String, String>? headers,
-  }) async {
-    final uri = _buildUri(path);
-    final allHeaders = _mergeHeaders(headers);
+  }) {
     final jsonBody = body != null ? jsonEncode(body) : null;
 
-    AppLogger.info('POST $uri');
-    if (body != null) {
-      AppLogger.debug('Тело запроса: ${jsonBody?.length ?? 0} символов');
-    }
-
-    try {
-      final response = await _client
-          .post(uri, headers: allHeaders, body: jsonBody)
-          .timeout(AppConfig.timeout);
-
-      AppLogger.debug('POST ${response.statusCode}');
-      _logResponse(response);
-
-      return response;
-    } on TimeoutException {
-      AppLogger.error('Таймаут при выполнении POST-запроса: $path');
-      throw NetworkException.timeout();
-    } catch (e) {
-      AppLogger.error('Ошибка при выполнении POST-запроса: $path', e);
-      throw ErrorHandler.handle(e);
-    }
+    return _executeRequest(
+      method: 'POST',
+      path: path,
+      bodyForLog: jsonBody,
+      send: () => _client.post(
+        _buildUri(path),
+        headers: _mergeHeaders(headers),
+        body: jsonBody,
+      ),
+    );
   }
 
-  /// POST-запрос со стрим-ответом (для SSE).
+  /// PATCH-запрос с JSON-телом. Бросает [ServerException] на `>= 400`.
+  Future<http.Response> patch(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? headers,
+  }) {
+    final jsonBody = body != null ? jsonEncode(body) : null;
+
+    return _executeRequest(
+      method: 'PATCH',
+      path: path,
+      bodyForLog: jsonBody,
+      send: () => _client.patch(
+        _buildUri(path),
+        headers: _mergeHeaders(headers),
+        body: jsonBody,
+      ),
+    );
+  }
+
+  /// DELETE-запрос. Бросает [ServerException] на `>= 400`.
+  Future<http.Response> delete(String path, {Map<String, String>? headers}) {
+    return _executeRequest(
+      method: 'DELETE',
+      path: path,
+      send: () =>
+          _client.delete(_buildUri(path), headers: _mergeHeaders(headers)),
+    );
+  }
+
+  // ============================================================
+  // 4. СТРИМ (SSE)
+  // ============================================================
+
+  /// POST-запрос со стрим-ответом (SSE). Бросает [ServerException] на `>= 400`.
   ///
-  /// Отличается от обычного POST тем, что возвращает StreamedResponse.
-  /// Это позволяет читать ответ по частям (токен за токеном).
+  /// **Почему отдельно от _executeRequest:**
+  /// при ошибке надо прочитать тело (это JSON, а не SSE-поток),
+  /// чтобы положить его в `ServerException.responseBody`. Если отдать
+  /// стрим в SseParser, тот не сможет прочитать тело — он ожидает
+  /// SSE-события, а не JSON ошибки.
   ///
-  /// Пример использования:
-  /// ```dart
-  /// final body = {'model': 'auto', 'messages': [...]};
-  /// final response = await client.postStream('/v1/chat/completions', body: body);
-  /// ```
+  /// Успех (`200 OK`) — возвращаем `StreamedResponse` как есть,
+  /// парсер SSE прочитает тело по кусочкам.
   Future<http.StreamedResponse> postStream(
     String path, {
     Map<String, dynamic>? body,
@@ -149,36 +154,57 @@ class AppHttpClient {
 
       AppLogger.debug('POST (stream) ${response.statusCode}');
 
+      // Проверяем статус ДО возврата. На ошибке читаем тело целиком —
+      // это уже не стрим, а обычный JSON с деталями.
+      if (response.statusCode >= 400) {
+        final bodyString = await response.stream.bytesToString();
+        _logHttpError(response.statusCode, bodyString);
+
+        throw _buildServerException(
+          statusCode: response.statusCode,
+          bodyString: bodyString,
+        );
+      }
+
       return response;
     } on TimeoutException {
       AppLogger.error('Таймаут при выполнении POST-запроса (stream): $path');
       throw NetworkException.timeout();
-    } catch (e) {
-      AppLogger.error('Ошибка при выполнении POST-запроса (stream): $path', e);
-      throw ErrorHandler.handle(e);
+    } on http.ClientException catch (e, stackTrace) {
+      AppLogger.error(
+        'Ошибка сети при POST-запросе (stream): $path',
+        e,
+        stackTrace,
+      );
+      throw NetworkException.connectionError(e);
+    } on ServerException {
+      // Уже наше — пробрасываем как есть, чтобы не обернуть в общий.
+      rethrow;
+    } catch (e, stackTrace) {
+      AppLogger.error('Ошибка при POST-запросе (stream): $path', e, stackTrace);
+      throw NetworkException.connectionError(e);
     }
   }
 
-  /// POST-запрос с multipart/form-data — используется для загрузки файлов.
-  ///
-  /// Отличается от [post] тем, что тело — не JSON, а multipart-форма:
-  /// файл + опциональные текстовые поля. Такой формат требует бэкенд
-  /// для `POST /v1/files` (см. README `document_chat`).
+  // ============================================================
+  // 5. MULTIPART (ЗАГРУЗКА ФАЙЛОВ)
+  // ============================================================
+
+  /// POST-запрос с multipart/form-data. **Не бросает на `>= 400`.**
   ///
   /// Особенности:
   /// - **Отдельный таймаут** [timeout] — по умолчанию [AppConfig.uploadTimeout]
   ///   (10 минут), потому что сервер синхронно прогоняет файл через MinerU.
-  ///   Если не передан — берём дефолт; при желании можно переопределить.
-  /// - **Обработчик ошибок** — [ErrorHandler.handleFileUpload], а не [ErrorHandler.handle]:
-  ///   в контексте загрузки файла для пользователя сообщение должно быть
-  ///   «не удалось загрузить файл», а не «сервер не отвечает».
-  /// - **Возвращает** `http.Response` как есть — статусы (`413`, `400`, `502`)
-  ///   разбирает вызывающий код (`AttachmentRepository`), не этот метод.
+  /// - **Не бросает на `>= 400`** — каждый статус здесь несёт бизнес-смысл:
+  ///   201 = успех, 400 = проблема с запросом, 413 = файл большой,
+  ///   502 = MinerU упал, 503 = перегрузка. Разбор — задача репозитория.
+  /// - **Транспортные ошибки бросает** как обычно: нет сети → NetworkException,
+  ///   таймаут → NetworkException.
   ///
-  /// Пример использования:
+  /// Пример:
   /// ```dart
   /// final response = await client.postMultipart(
-  ///   '/v1/files',
+  ///   '/agents/document_chat/v1/files',
   ///   file: File('/path/to/накладная.pdf'),
   ///   fields: {'conversation_id': 'cid-42'},
   /// );
@@ -195,8 +221,6 @@ class AppHttpClient {
     final allHeaders = _mergeHeaders(headers);
     final effectiveTimeout = timeout ?? AppConfig.uploadTimeout;
 
-    // Логируем начало загрузки. Размер файла читаем отдельно — это
-    // может быть полезно в отладке и стоит один системный вызов.
     AppLogger.info('POST (multipart) $uri');
     AppLogger.debug(
       'Загружаем файл: ${file.path.split('/').last} '
@@ -204,38 +228,21 @@ class AppHttpClient {
     );
 
     try {
-      // 1. Собираем multipart-запрос.
-      //
-      // MultipartRequest — специальный тип из package:http, который
-      // автоматически формирует тело с границами (boundary) и ставит
-      // правильный Content-Type: multipart/form-data.
       final request = http.MultipartRequest('POST', uri)
         ..headers.addAll(allHeaders);
 
-      // 2. Добавляем текстовые поля (если есть).
-      //    Например, conversation_id — привязка файла к чату.
       if (fields != null && fields.isNotEmpty) {
         request.fields.addAll(fields);
       }
 
-      // 3. Добавляем сам файл.
-      //
       // fromPath — предпочтительнее fromBytes: файл читается по кускам
-      // по мере отправки, а не грузится целиком в память. Для 25 МБ разница
-      // заметна. Имя поля формы — fileField (по умолчанию 'file', как ждёт
-      // бэкенд).
+      // по мере отправки, а не грузится целиком в память.
       final multipartFile = await http.MultipartFile.fromPath(
         fileField,
         file.path,
       );
       request.files.add(multipartFile);
 
-      // 4. Отправляем.
-      //
-      // client.send() — единственный способ отправить MultipartRequest.
-      // Возвращает StreamedResponse — то есть тело доступно потоково.
-      // Мы читаем его целиком через Response.fromStream(), чтобы получить
-      // обычный Response с .body/.statusCode.
       final streamedResponse = await _client
           .send(request)
           .timeout(effectiveTimeout);
@@ -245,84 +252,165 @@ class AppHttpClient {
       AppLogger.debug('POST (multipart) ${response.statusCode}');
       _logResponse(response);
 
+      // НЕ бросаем на >= 400 — разбор статуса на стороне репозитория.
       return response;
     } on TimeoutException catch (e, stackTrace) {
       AppLogger.error(
         'Таймаут при загрузке файла: $path '
         '(лимит: ${effectiveTimeout.inMinutes} мин)',
+        e,
+        stackTrace,
       );
-      throw ErrorHandler.handleFileUpload(e, stackTrace);
+      throw NetworkException.timeout(e);
+    } on http.ClientException catch (e, stackTrace) {
+      AppLogger.error('Ошибка сети при загрузке файла: $path', e, stackTrace);
+      throw NetworkException.connectionError(e);
     } catch (e, stackTrace) {
       AppLogger.error('Ошибка при загрузке файла: $path', e, stackTrace);
-      throw ErrorHandler.handleFileUpload(e, stackTrace);
-    }
-  }
-
-  /// PATCH-запрос с JSON-телом.
-  Future<http.Response> patch(
-    String path, {
-    Map<String, dynamic>? body,
-    Map<String, String>? headers,
-  }) async {
-    final uri = _buildUri(path);
-    final allHeaders = _mergeHeaders(headers);
-    final jsonBody = body != null ? jsonEncode(body) : null;
-
-    AppLogger.info('PATCH $uri');
-
-    try {
-      final response = await _client
-          .patch(uri, headers: allHeaders, body: jsonBody)
-          .timeout(AppConfig.timeout);
-
-      AppLogger.debug('PATCH ${response.statusCode}');
-      _logResponse(response);
-
-      return response;
-    } on TimeoutException {
-      AppLogger.error('Таймаут при выполнении PATCH-запроса: $path');
-      throw NetworkException.timeout();
-    } catch (e) {
-      AppLogger.error('Ошибка при выполнении PATCH-запроса: $path', e);
-      throw ErrorHandler.handle(e);
-    }
-  }
-
-  /// DELETE-запрос.
-  Future<http.Response> delete(
-    String path, {
-    Map<String, String>? headers,
-  }) async {
-    final uri = _buildUri(path);
-    final allHeaders = _mergeHeaders(headers);
-
-    AppLogger.info('DELETE $uri');
-
-    try {
-      final response = await _client
-          .delete(uri, headers: allHeaders)
-          .timeout(AppConfig.timeout);
-
-      AppLogger.debug('DELETE ${response.statusCode}');
-      _logResponse(response);
-
-      return response;
-    } on TimeoutException {
-      AppLogger.error('Таймаут при выполнении DELETE-запроса: $path');
-      throw NetworkException.timeout();
-    } catch (e) {
-      AppLogger.error('Ошибка при выполнении DELETE-запроса: $path', e);
-      throw ErrorHandler.handle(e);
+      throw NetworkException.connectionError(e);
     }
   }
 
   // ============================================================
-  // 4. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+  // 6. ЗАКРЫТИЕ
+  // ============================================================
+
+  /// Закрывает HTTP-клиент. Обычно вызывается при завершении приложения.
+  void close() {
+    AppLogger.debug('Закрытие HTTP клиента');
+    _client.close();
+  }
+
+  // ============================================================
+  // 7. ПРИВАТНЫЕ МЕТОДЫ — ОБЩИЙ КОНВЕЙЕР
+  // ============================================================
+
+  /// Общий конвейер для обычных запросов (`get`/`post`/`patch`/`delete`).
+  ///
+  /// Делает всё в одном месте:
+  /// - ставит таймаут;
+  /// - логирует запрос и ответ;
+  /// - ловит транспортные ошибки → [NetworkException];
+  /// - проверяет статус → [ServerException] на `>= 400`.
+  ///
+  /// [send] — лямбда, которая выполняет конкретный запрос. Например,
+  /// для `get` это `() => _client.get(...)`. Так один хелпер обслуживает
+  /// четыре метода без дублирования.
+  Future<http.Response> _executeRequest({
+    required String method,
+    required String path,
+    required Future<http.Response> Function() send,
+    String? bodyForLog,
+  }) async {
+    AppLogger.info('$method ${_buildUri(path)}');
+    if (bodyForLog != null) {
+      AppLogger.debug('Тело запроса: ${bodyForLog.length} символов');
+    }
+
+    try {
+      final response = await send().timeout(AppConfig.timeout);
+
+      AppLogger.debug('$method ${response.statusCode}');
+
+      // Единая проверка статуса для всех обычных методов.
+      _throwIfError(response);
+
+      return response;
+    } on TimeoutException catch (e, stackTrace) {
+      AppLogger.error('Таймаут $method-запроса: $path', e, stackTrace);
+      throw NetworkException.timeout(e);
+    } on http.ClientException catch (e, stackTrace) {
+      AppLogger.error('Ошибка сети $method-запроса: $path', e, stackTrace);
+      throw NetworkException.connectionError(e);
+    } on ServerException {
+      // Уже наше — пробрасываем как есть.
+      rethrow;
+    } catch (e, stackTrace) {
+      AppLogger.error('Ошибка $method-запроса: $path', e, stackTrace);
+      throw NetworkException.connectionError(e);
+    }
+  }
+
+  /// Проверяет статус ответа и бросает [ServerException] при `>= 400`.
+  ///
+  /// Тело ошибки пытается распарсить как JSON — чтобы вытащить
+  /// `error.message` и `error.code`, которые кладёт бэкенд.
+  /// Если тело не JSON (например, HTML от nginx) — вернёт `null`.
+  void _throwIfError(http.Response response) {
+    if (response.statusCode < 400) return;
+
+    _logHttpError(response.statusCode, response.body);
+
+    throw _buildServerException(
+      statusCode: response.statusCode,
+      bodyString: response.body,
+    );
+  }
+
+  /// Собирает [ServerException] по статусу и телу ответа.
+  ///
+  /// Делает **разделение по классу статуса**:
+  /// - `4xx` → `clientError` (ошибка клиента: неправильный запрос,
+  ///   нет доступа, не найдено);
+  /// - `5xx` → `serverError` (ошибка сервера: сломалось, перегрузка).
+  ///
+  /// Разные фабрики дают разные `userMessage` — это важно для UI.
+  /// Технические детали (`body`) кладутся в `responseBody` — их увидит
+  /// репозиторий, но не пользователь.
+  ServerException _buildServerException({
+    required int statusCode,
+    required String bodyString,
+  }) {
+    final parsedBody = _tryParseJson(bodyString);
+
+    if (statusCode >= 500) {
+      return ServerException.serverError(
+        statusCode: statusCode,
+        body: parsedBody,
+      );
+    }
+    return ServerException.clientError(
+      statusCode: statusCode,
+      body: parsedBody,
+    );
+  }
+
+  /// Пытается распарсить тело как JSON-объект.
+  ///
+  /// Возвращает `null`, если тело пустое, не JSON или это не объект.
+  /// **Никогда не бросает** — используется для диагностики, а не для логики.
+  Map<String, dynamic>? _tryParseJson(String body) {
+    if (body.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(body);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Логирует HTTP-ошибку с телом (обрезанным до 200 символов).
+  void _logHttpError(int statusCode, String body) {
+    final preview = body.length > 200 ? '${body.substring(0, 200)}...' : body;
+    AppLogger.warning('HTTP $statusCode: $preview');
+  }
+
+  /// Логирует ответ, если он содержит ошибку.
+  ///
+  /// Используется в `postMultipart`, где мы не бросаем на `>= 400`,
+  /// но хотим видеть ошибку в логах.
+  void _logResponse(http.Response response) {
+    if (response.statusCode >= 400) {
+      _logHttpError(response.statusCode, response.body);
+    }
+  }
+
+  // ============================================================
+  // 8. ПРИВАТНЫЕ МЕТОДЫ — URL И ЗАГОЛОВКИ
   // ============================================================
 
   /// Строит полный URI из базового URL и пути.
   Uri _buildUri(String path) {
-    // Убираем лишние слэши
     final base = AppConfig.baseUrl.endsWith('/')
         ? AppConfig.baseUrl.substring(0, AppConfig.baseUrl.length - 1)
         : AppConfig.baseUrl;
@@ -333,48 +421,25 @@ class AppHttpClient {
   }
 
   /// Объединяет заголовки по умолчанию с переданными.
+  ///
+  /// Всегда добавляет `X-User-Id` — сейчас это единственный способ
+  /// аутентификации. Когда появится настоящая авторизация (JWT),
+  /// здесь же добавится `Authorization: Bearer ...`.
   Map<String, String> _mergeHeaders(
     Map<String, String>? customHeaders, {
     bool isStream = false,
   }) {
-    // Берем заголовки по умолчанию
     final defaultHeaders = isStream
         ? AppConfig.streamHeaders
         : AppConfig.defaultHeaders;
 
-    // Добавляем X-User-Id
     final headers = Map<String, String>.from(defaultHeaders)
       ..['X-User-Id'] = AppConfig.userId;
 
-    // Добавляем кастомные заголовки (они переопределяют дефолтные)
     if (customHeaders != null) {
       headers.addAll(customHeaders);
     }
 
     return headers;
-  }
-
-  /// Логирует ответ, если он содержит ошибку.
-  void _logResponse(http.Response response) {
-    if (response.statusCode >= 400) {
-      // Обрезаем длинное тело ответа для читаемости
-      final body = response.body.length > 200
-          ? '${response.body.substring(0, 200)}...'
-          : response.body;
-      AppLogger.warning('HTTP ${response.statusCode}: $body');
-    }
-  }
-
-  // ============================================================
-  // 5. ЗАКРЫТИЕ КЛИЕНТА
-  // ============================================================
-
-  /// Закрывает HTTP клиент.
-  ///
-  /// Нужно вызывать при завершении приложения,
-  /// но обычно Flutter сам управляет жизненным циклом.
-  void close() {
-    AppLogger.debug('Закрытие HTTP клиента');
-    _client.close();
   }
 }
