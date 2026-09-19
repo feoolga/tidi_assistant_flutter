@@ -1,31 +1,43 @@
 // lib/data/repositories/chat_repository.dart
 
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
-import '../datasources/remote/chat_api.dart';
-import '../../domain/models/agent.dart';
-import '../../domain/models/chat_session.dart';
-import '../../domain/models/message.dart';
-import '../../core/logger/app_logger.dart';
+
+import '../../core/errors/business_exceptions.dart';
 import '../../core/errors/error_handler.dart';
 import '../../core/errors/server_exceptions.dart';
-import '../models/agent_dto.dart';
-import '../models/chat_session_dto.dart';
-import '../models/message_dto.dart';
+import '../../core/logger/app_logger.dart';
+import '../../domain/models/agent.dart';
+import '../../domain/models/attachment.dart';
+import '../../domain/models/chat_session.dart';
+import '../../domain/models/message.dart';
+import '../datasources/remote/chat_api.dart';
 import '../mappers/agent_mapper.dart';
 import '../mappers/chat_session_mapper.dart';
 import '../mappers/message_mapper.dart';
-import '../../domain/models/attachment.dart';
+import '../models/agent_dto.dart';
+import '../models/chat_session_dto.dart';
+import '../models/message_dto.dart';
 
 /// Репозиторий для работы с чатом.
 ///
 /// Этот слой отвечает за:
-/// 1. Получение данных из API (через ChatApi)
-/// 2. Преобразование данных из формата сервера в формат приложения
-/// 3. Подготовку данных для UseCase-ов
+/// 1. Получение данных из API (через [ChatApi]).
+/// 2. Преобразование данных из формата сервера в формат приложения.
+/// 3. Подготовку данных для use-case-ов.
 ///
-/// Repository НЕ ЗНАЕТ про UI и про бизнес-логику.
-/// Он только отвечает на вопрос: "Где взять данные и как их преобразовать?"
+/// **Политика ошибок:**
+/// - Репозиторий **никогда** не возвращает пустое вместо ошибки.
+/// - Все ошибки — либо валидные данные (включая `[]` там, где это
+///   семантически правильно, например `404 → []` для `getConversations`),
+///   либо `AppException` наверх.
+/// - Логирование — с `stackTrace` и контекстом (operation, ids).
+///
+/// **Что репозиторий НЕ делает:**
+/// - Не проверяет `statusCode != 200` — этим занимается [AppHttpClient],
+///   который бросает `ServerException` на `>= 400`.
+/// - Не решает, что показать пользователю — это работа UI.
 class ChatRepository {
   // ============================================================
   // 1. ЗАВИСИМОСТИ
@@ -44,65 +56,47 @@ class ChatRepository {
   // ============================================================
 
   /// Получить список агентов.
-  /// GET /v1/models
+  ///
+  /// `GET /v1/models` — клиент уже бросит `ServerException` на `>= 400`.
+  /// Нам остаётся только распарсить и замапить.
+  ///
+  /// **Важно:** фильтруем `auto` — это **не** агент, а **специальное**
+  /// значение для роутинга.
   Future<List<Agent>> getAgents() async {
     try {
-      // 1. Запрашиваем данные через API
       final response = await _api.getModels();
 
-      // 2. Проверяем статус
-      if (response.statusCode != 200) {
-        AppLogger.error('Ошибка загрузки агентов: ${response.statusCode}');
-        // 👇 Бросаем ServerException с правильным статусом
-        throw ServerException.clientError(
-          statusCode: response.statusCode,
-          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
-        );
-      }
-
-      // 3. Парсим JSON
       final Map<String, dynamic> data = jsonDecode(response.body);
       final List<dynamic> models = data['data'] ?? [];
 
-      // 4. Преобразуем в модели Agent
-      // Фильтруем "auto" — это не агент, а специальное значение для роутинга
       final agents = models
           .where((item) => item['id'] != 'auto')
-          .map((json) => AgentDto.fromJson(json))
+          .map((json) => AgentDto.fromJson(json as Map<String, dynamic>))
           .map((dto) => AgentMapper.toDomain(dto))
           .toList();
 
       AppLogger.info('Загружено агентов: ${agents.length}');
       return agents;
-    } catch (e) {
-      AppLogger.error('Не удалось загрузить агентов', e);
-      // 👇 ErrorHandler превратит любую ошибку в AppException
-      throw ErrorHandler.handle(e);
+    } catch (e, stackTrace) {
+      AppLogger.logException('Не удалось загрузить агентов', e, stackTrace);
+      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
   /// Определить, какого агента выберет роутер, без реального вызова.
   ///
-  /// POST /route — тело `{"message": "..."}`, ответ `{"agent": "<id>"}`.
+  /// `POST /route` — тело `{"message": "..."}`, ответ `{"agent": "<id>"}`.
   ///
-  /// Используется при открытии нового чата: сначала узнаём `agent_id`,
-  /// потом создаём чат у этого агента и дальше все сообщения идут
-  /// в `POST /v1/responses` с явным `model: agent_id`.
+  /// **Семантическая проверка:** ответ **должен** содержать поле `agent`
+  /// (тип `String`, непустое). Если нет — это **не** валидный ответ,
+  /// и мы бросаем `ServerException.parseError`.
   ///
-  /// Возвращает `agent_id` (`"epoz"`, `"document_chat"`, ...).
-  /// Бросает [ServerException], если сервер ответил ошибкой или
-  /// прислал невалидный ответ.
+  /// **Почему это в репозитории, а не в клиенте:** клиент не знает,
+  /// что ответ `/route` **должен** содержать `agent`. Это **доменное**
+  /// требование к конкретному эндпоинту.
   Future<String> getRoute(String message) async {
     try {
       final response = await _api.route(message: message);
-
-      if (response.statusCode != 200) {
-        AppLogger.error('Ошибка роутинга: ${response.statusCode}');
-        throw ServerException.clientError(
-          statusCode: response.statusCode,
-          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
-        );
-      }
 
       final Map<String, dynamic> data = jsonDecode(response.body);
       final agentId = data['agent'];
@@ -116,9 +110,11 @@ class ChatRepository {
 
       AppLogger.info('Роутер выбрал агента: $agentId');
       return agentId;
-    } catch (e) {
-      AppLogger.error('Не удалось определить агента', e);
-      throw ErrorHandler.handle(e);
+    } catch (e, stackTrace) {
+      AppLogger.logException('Не удалось определить агента', e, stackTrace, {
+        'message_length': message.length,
+      });
+      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
@@ -127,7 +123,13 @@ class ChatRepository {
   // ============================================================
 
   /// Создать новый чат для агента.
-  /// POST /agents/{agentId}/v1/platform/conversations
+  ///
+  /// `POST /agents/{agentId}/v1/platform/conversations` — успех **только** `201`.
+  ///
+  /// **Почему явная проверка `== 201`:** клиент **не** бросает на `200`/`202`/`204`
+  /// (это `< 400`). Но по контракту успех — **только** `201`. Если сервер
+  /// вернёт `200` с **непонятным** телом — мы **хотим** это заметить,
+  /// а не пытаться распарсить неизвестное.
   Future<ChatSession> createConversation({
     required String agentId,
     String? title,
@@ -138,12 +140,16 @@ class ChatRepository {
         title: title,
       );
 
-      if (response.statusCode != 200 && response.statusCode != 201) {
-        AppLogger.error('Ошибка создания чата: ${response.statusCode}');
-        // 👇 Бросаем ServerException
+      if (response.statusCode != 201) {
+        AppLogger.error(
+          'Неожиданный статус при создании чата: ${response.statusCode} '
+          '(ожидался 201)',
+        );
         throw ServerException.clientError(
           statusCode: response.statusCode,
-          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
+          body: response.body.isNotEmpty
+              ? jsonDecode(response.body) as Map<String, dynamic>
+              : null,
         );
       }
 
@@ -153,47 +159,77 @@ class ChatRepository {
 
       AppLogger.info('Чат создан: ${session.id}');
       return session;
-    } catch (e) {
-      AppLogger.error('Не удалось создать чат для агента $agentId', e);
-      // 👇 Используем ErrorHandler
-      throw ErrorHandler.handle(e);
+    } catch (e, stackTrace) {
+      AppLogger.logException(
+        'Не удалось создать чат для агента $agentId',
+        e,
+        stackTrace,
+        {'agentId': agentId, 'title': title},
+      );
+      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
   /// Получить список чатов агента.
-  /// GET /agents/{agentId}/v1/platform/conversations
+  ///
+  /// `GET /agents/{agentId}/v1/platform/conversations` — успех `200`.
+  ///
+  /// **Семантический случай `404`:** у агента **нет** чатов. Это **не**
+  /// ошибка — возвращаем **пустой** список. Все остальные статусы
+  /// (`>= 400`) — **ошибка**, пробрасываем.
+  ///
+  /// **Что НЕ делаем:** не глотаем **все** ошибки. Если сеть упала —
+  /// пробросим `NetworkException`, пользователь увидит ошибку,
+  /// а не **пустой** список.
   Future<List<ChatSession>> getConversations({required String agentId}) async {
     try {
       final response = await _api.getConversations(agentId: agentId);
 
-      if (response.statusCode == 404) {
+      final List<dynamic> data = jsonDecode(response.body) as List;
+      final chats = data
+          .map((json) => ChatSessionDto.fromJson(json as Map<String, dynamic>))
+          .map((dto) => ChatSessionMapper.toDomain(dto, agentId))
+          .toList();
+
+      AppLogger.debug('Загружено чатов для агента $agentId: ${chats.length}');
+      return chats;
+    } on ServerException catch (e, stackTrace) {
+      // 404 — семантически "у агента нет чатов". Не ошибка.
+      if (e.statusCode == 404) {
+        AppLogger.info('У агента $agentId нет чатов (404)');
         return [];
       }
 
-      if (response.statusCode != 200) {
-        AppLogger.error('Ошибка загрузки чатов: ${response.statusCode}');
-        // 👇 Бросаем ServerException
-        throw ServerException.clientError(
-          statusCode: response.statusCode,
-          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
-        );
-      }
-
-      final List<dynamic> data = jsonDecode(response.body);
-      final chats = data
-          .map((json) => ChatSessionDto.fromJson(json))
-          .map((dto) => ChatSessionMapper.toDomain(dto, agentId))
-          .toList();
-      AppLogger.debug('Загружено чатов для агента $agentId: ${chats.length}');
-      return chats;
-    } catch (e) {
-      AppLogger.warning('Не удалось загрузить чаты для агента $agentId: $e');
-      return []; // 👈 Оставляем — возвращаем пустой список
+      // Все остальные серверные ошибки — пробрасываем.
+      AppLogger.logException(
+        'Не удалось загрузить чаты агента $agentId',
+        e,
+        stackTrace,
+        {'agentId': agentId},
+      );
+      throw ErrorHandler.handle(e, stackTrace);
+    } catch (e, stackTrace) {
+      // Транспортные ошибки, невалидный JSON — сюда.
+      AppLogger.logException(
+        'Не удалось загрузить чаты агента $agentId',
+        e,
+        stackTrace,
+        {'agentId': agentId},
+      );
+      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
   /// Получить сообщения чата.
-  /// GET /agents/{agentId}/v1/platform/conversations/{conversationId}/messages
+  ///
+  /// `GET /agents/{agentId}/v1/platform/conversations/{conversationId}/messages`
+  ///
+  /// **Семантический случай `404`:** чат **удалён** или **чужой**.
+  /// По README: обращение к **чужому** чату возвращает `404`
+  /// (сервис **не** подтверждает существование **чужих** ресурсов).
+  /// Пользователю — **явное** сообщение «Этот чат был удалён».
+  ///
+  /// Все остальные ошибки — пробрасываем.
   Future<List<Message>> getMessages({
     required String agentId,
     required String conversationId,
@@ -204,16 +240,7 @@ class ChatRepository {
         conversationId: conversationId,
       );
 
-      if (response.statusCode != 200) {
-        AppLogger.error('Ошибка загрузки сообщений: ${response.statusCode}');
-        // 👇 Бросаем ServerException
-        throw ServerException.clientError(
-          statusCode: response.statusCode,
-          body: response.body.isNotEmpty ? jsonDecode(response.body) : null,
-        );
-      }
-
-      final List<dynamic> data = jsonDecode(response.body);
+      final List<dynamic> data = jsonDecode(response.body) as List;
       final messages = data
           .map((json) => MessageDto.fromJson(json as Map<String, dynamic>))
           .map((dto) => MessageMapper.toDomain(dto))
@@ -223,10 +250,28 @@ class ChatRepository {
         'Загружено сообщений чата $conversationId: ${messages.length}',
       );
       return messages;
-    } catch (e) {
-      AppLogger.error('Не удалось загрузить сообщения чата $conversationId', e);
-      // 👇 Используем ErrorHandler
-      throw ErrorHandler.handle(e);
+    } on ServerException catch (e, stackTrace) {
+      // 404 — чат удалён или чужой. Это **доменное** событие, не транспорт.
+      if (e.statusCode == 404) {
+        AppLogger.info('Чат $conversationId не найден (404)');
+        throw BusinessException.chatNotFound(conversationId);
+      }
+
+      AppLogger.logException(
+        'Не удалось загрузить сообщения чата $conversationId',
+        e,
+        stackTrace,
+        {'agentId': agentId, 'conversationId': conversationId},
+      );
+      throw ErrorHandler.handle(e, stackTrace);
+    } catch (e, stackTrace) {
+      AppLogger.logException(
+        'Не удалось загрузить сообщения чата $conversationId',
+        e,
+        stackTrace,
+        {'agentId': agentId, 'conversationId': conversationId},
+      );
+      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
@@ -240,6 +285,10 @@ class ChatRepository {
   /// `remoteId != null`). Формируют `input_file`-части в формате
   /// Responses API. Вложения без `remoteId` молча отбрасываются —
   /// см. [_buildInput].
+  ///
+  /// **Обработка ошибок:** `postStream` **сам** бросает `ServerException`
+  /// на `>= 400`, читая **тело** ошибки. Нам **не** надо проверять
+  /// статус — только пробросить.
   Future<http.StreamedResponse> sendMessageStream({
     required String text,
     String? conversationId,
@@ -259,23 +308,22 @@ class ChatRepository {
       AppLogger.debug('📎 Продолжаем чат: $conversationId');
     }
 
-    // ✅ ЛОГ 3: перед отправкой
-    AppLogger.debug('🚀 Отправка запроса на сервер...');
-
-    // 👇 Оборачиваем в try-catch для преобразования ошибок
     try {
       final response = await _api.sendMessage(body: body);
       AppLogger.debug('📥 Получен ответ: ${response.statusCode}');
-
-      // 👇 Проверяем статус ответа
-      if (response.statusCode != 200) {
-        throw ServerException.clientError(statusCode: response.statusCode);
-      }
-
       return response;
-    } catch (e) {
-      AppLogger.error('Ошибка при отправке стрим-запроса', e);
-      throw ErrorHandler.handle(e);
+    } catch (e, stackTrace) {
+      AppLogger.logException(
+        'Ошибка при отправке стрим-запроса',
+        e,
+        stackTrace,
+        {
+          'agentId': agentId,
+          'conversationId': conversationId,
+          'attachments_count': attachments.length,
+        },
+      );
+      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
