@@ -1,26 +1,69 @@
 // lib/providers/session_provider.dart
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../core/logger/app_logger.dart';
 
-/// Состояние текущей сессии чата
+/// Состояние текущей сессии чата.
 ///
-/// Это единственное место, где хранится информация о том,
-/// с каким агентом и в каком чате мы сейчас работаем.
+/// **Это единственный источник правды (SSOT) о том, с каким агентом
+/// и в каком чате мы сейчас работаем.** Все остальные места
+/// (`ChatState`, UI, use-case) читают сессию **отсюда**, а не хранят
+/// свою копию.
+///
+/// Почему именно `sessionProvider` — SSOT:
+/// - `agentId` и `sessionId` — это **сессия** пользователя с агентом,
+///   а не «состояние чата». Логически они отдельны от списка сообщений.
+/// - Сессия живёт **глобально**, а чат — только когда открыт `ChatScreen`.
+/// - Дублирование в `ChatState` приводило к рассинхронизации:
+///   `loadChat` обновлял `sessionProvider`, но не `ChatState`.
 class ChatSessionState {
+  /// ID агента, с которым идёт диалог.
+  ///
+  /// `null` — сессия ещё не начата (новый чат, до первого сообщения
+  /// или первого файла).
   final String? agentId;
-  final String? sessionId; // conversation_id
+
+  /// ID чата (`conversation_id`).
+  ///
+  /// `null` — сессия ещё не начата. Появляется после `POST /platform/conversations`
+  /// (обычный чат) или после загрузки файла (чат `document_chat`).
+  final String? sessionId;
 
   const ChatSessionState({this.agentId, this.sessionId});
 
-  /// Есть ли активная сессия
+  /// Есть ли активная сессия (и агент, и чат известны).
   bool get hasSession => agentId != null && sessionId != null;
 
-  /// Создать копию с измененными полями
-  ChatSessionState copyWith({String? agentId, String? sessionId}) {
+  // ------------------------------------------------------------
+  // copyWith с маркером _unset
+  // ------------------------------------------------------------
+
+  /// Специальный объект-маркер: «это поле не было передано в copyWith».
+  ///
+  /// Нужен, чтобы отличать `copyWith()` (не трогать поле)
+  /// от `copyWith(field: null)` (явно сбросить поле в null).
+  ///
+  /// Без этого маркера `copyWith(agentId: null)` **не смог бы** сбросить
+  /// `agentId` — `null ?? this.agentId` вернул бы старое значение.
+  static const _unset = Object();
+
+  /// Создать копию с изменёнными полями.
+  ///
+  /// Примеры:
+  /// - `copyWith()` — вернуть копию без изменений.
+  /// - `copyWith(agentId: 'epoz')` — обновить только `agentId`.
+  /// - `copyWith(agentId: null)` — **сбросить** `agentId` в `null`.
+  /// - `copyWith(sessionId: 'abc')` — обновить только `sessionId`.
+  ChatSessionState copyWith({
+    Object? agentId = _unset,
+    Object? sessionId = _unset,
+  }) {
     return ChatSessionState(
-      agentId: agentId ?? this.agentId,
-      sessionId: sessionId ?? this.sessionId,
+      agentId: identical(agentId, _unset) ? this.agentId : agentId as String?,
+      sessionId: identical(sessionId, _unset)
+          ? this.sessionId
+          : sessionId as String?,
     );
   }
 
@@ -29,7 +72,9 @@ class ChatSessionState {
       'ChatSessionState(agentId: $agentId, sessionId: $sessionId)';
 }
 
-/// Провайдер для управления текущей сессией чата
+/// Провайдер для управления текущей сессией чата.
+///
+/// **SSOT** — см. комментарий к [ChatSessionState].
 final sessionProvider =
     StateNotifierProvider<SessionNotifier, ChatSessionState>((ref) {
       return SessionNotifier();
@@ -38,12 +83,17 @@ final sessionProvider =
 class SessionNotifier extends StateNotifier<ChatSessionState> {
   SessionNotifier() : super(const ChatSessionState());
 
-  /// Установить новую сессию
+  // ============================================================
+  // ПУБЛИЧНЫЕ МЕТОДЫ
+  // ============================================================
+
+  /// Установить новую сессию (и агента, и чат).
   ///
-  /// Используется при создании нового чата или при получении
-  /// agentId и sessionId из ответа сервера
+  /// Используется при:
+  /// - создании нового чата (`POST /platform/conversations`);
+  /// - получении `agent_id` и `conversation_id` из ответа генерации;
+  /// - загрузке чата из истории (`loadChat`).
   void setSession(String agentId, String sessionId) {
-    // Проверяем, изменилось ли что-то
     if (state.agentId == agentId && state.sessionId == sessionId) {
       AppLogger.debug('Сессия уже установлена: агент=$agentId, чат=$sessionId');
       return;
@@ -53,7 +103,10 @@ class SessionNotifier extends StateNotifier<ChatSessionState> {
     AppLogger.info('Сессия установлена: агент=$agentId, чат=$sessionId');
   }
 
-  /// Очистить сессию (начать новый диалог)
+  /// Очистить сессию (начать новый диалог).
+  ///
+  /// Сбрасывает **оба** поля в `null`. Используется при `createNewChat`
+  /// и при выходе пользователя из чата (если понадобится).
   void clearSession() {
     if (state.agentId == null && state.sessionId == null) {
       AppLogger.debug('Сессия уже пуста');
@@ -64,47 +117,55 @@ class SessionNotifier extends StateNotifier<ChatSessionState> {
     AppLogger.info('Сессия очищена');
   }
 
-  /// Обновить только ID агента
+  /// Обновить только ID агента.
   ///
-  /// Используется, если агент изменился, но чат остался тот же
-  void updateAgent(String agentId) {
-    if (state.agentId == agentId) {
-      return;
-    }
+  /// [agentId] может быть `null` — тогда агент **сбрасывается**,
+  /// а `sessionId` остаётся прежним.
+  ///
+  /// Пример использования: пользователь прикрепил файл — переключаемся
+  /// на `document_chat`, но если чат ещё не создан — `sessionId` станет
+  /// `null` отдельно, через `setSession`.
+  void updateAgent(String? agentId) {
+    if (state.agentId == agentId) return;
 
     state = state.copyWith(agentId: agentId);
-    AppLogger.debug('Агент обновлён: $agentId');
+    AppLogger.debug('Агент обновлён: ${agentId ?? "(сброшен)"}');
   }
 
-  /// Обновить только ID сессии
+  /// Обновить только ID сессии.
   ///
-  /// Используется, если ID сессии изменился, но агент остался тот же
-  void updateSession(String sessionId) {
-    if (state.sessionId == sessionId) {
-      return;
-    }
+  /// [sessionId] может быть `null` — тогда сессия **сбрасывается**,
+  /// а `agentId` остаётся прежним.
+  void updateSession(String? sessionId) {
+    if (state.sessionId == sessionId) return;
 
     state = state.copyWith(sessionId: sessionId);
-    AppLogger.debug('Сессия обновлена: $sessionId');
+    AppLogger.debug('Сессия обновлена: ${sessionId ?? "(сброшена)"}');
   }
 
-  /// Проверить, совпадает ли переданная сессия с текущей
+  /// Проверить, совпадает ли переданная пара с текущей сессией.
   bool isCurrentSession(String agentId, String sessionId) {
     return state.agentId == agentId && state.sessionId == sessionId;
   }
 }
 
-/// Вспомогательный провайдер для быстрого доступа к ID агента
+// ============================================================
+// ВСПОМОГАТЕЛЬНЫЕ ПРОВАЙДЕРЫ
+// ============================================================
+
+/// Быстрый доступ к ID агента из UI.
+///
+/// Пример: `ref.watch(currentAgentIdProvider)` — вернёт `agentId` или `null`.
 final currentAgentIdProvider = Provider<String?>((ref) {
   return ref.watch(sessionProvider).agentId;
 });
 
-/// Вспомогательный провайдер для быстрого доступа к ID сессии
+/// Быстрый доступ к ID сессии из UI.
 final currentSessionIdProvider = Provider<String?>((ref) {
   return ref.watch(sessionProvider).sessionId;
 });
 
-/// Вспомогательный провайдер: есть ли активная сессия
+/// Быстрый доступ к флагу «есть активная сессия».
 final hasSessionProvider = Provider<bool>((ref) {
   return ref.watch(sessionProvider).hasSession;
 });
