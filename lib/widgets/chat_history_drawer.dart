@@ -37,11 +37,6 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
     final isLoading = ref.watch(chatListLoadingProvider);
     final error = ref.watch(chatListErrorProvider);
 
-    AppLogger.debug(
-      '📂 ChatHistoryDrawer.build: _isLoaded=$_isLoaded, '
-      'chats=${chats.length}, isLoading=$isLoading',
-    );
-
     // 👇 ЗАГРУЖАЕМ ТОЛЬКО ОДИН РАЗ
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_isLoaded) {

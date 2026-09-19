@@ -9,6 +9,7 @@ import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 import 'attachment_picker_helper.dart';
 import 'attachment_preview.dart';
+import '../domain/models/attachment.dart';
 
 /// Поле ввода сообщения с кнопками «прикрепить», «микрофон», «отправить»
 /// и списком превью прикреплённых файлов над полем ввода.
@@ -63,9 +64,23 @@ class _MessageInputState extends ConsumerState<MessageInput> {
 
   void _sendMessage() {
     final text = _controller.text.trim();
-    final hasAttachments = ref.read(chatProvider).pendingAttachments.isNotEmpty;
+    final chatState = ref.read(chatProvider);
+    final hasAttachments = chatState.pendingAttachments.isNotEmpty;
 
-    // Разрешаем отправку, если есть текст ИЛИ вложения.
+    // Не отправляем, если есть незагруженные (или упавшие) вложения —
+    // иначе сообщение уйдёт без файла, и пользователь не поймёт, почему
+    // AI его «не увидел».
+    if (hasAttachments && !_allAttachmentsReady(chatState)) {
+      // Показываем подсказку — иначе пользователь подумает, что кнопка сломана.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Дождитесь загрузки файлов'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     if ((text.isEmpty && !hasAttachments) || widget.isLoading) return;
 
     _controller.clear();
@@ -127,6 +142,20 @@ class _MessageInputState extends ConsumerState<MessageInput> {
     return true;
   }
 
+  /// Все ли вложения готовы к отправке?
+  ///
+  /// Возвращает `true`, если:
+  /// - вложений нет вообще;
+  /// - все вложения в статусе [AttachmentStatus.done].
+  ///
+  /// `false`, если хотя бы одно вложение в статусе `pending`/`uploading`/
+  /// `processing`/`failed`.
+  bool _allAttachmentsReady(ChatState chatState) {
+    return chatState.pendingAttachments.every(
+      (a) => a.status == AttachmentStatus.done,
+    );
+  }
+
   // ============================================================
   // BUILD
   // ============================================================
@@ -137,7 +166,15 @@ class _MessageInputState extends ConsumerState<MessageInput> {
     final sessionState = ref.watch(sessionProvider);
 
     final hasAttachments = chatState.pendingAttachments.isNotEmpty;
-    final canSend = (_hasText || hasAttachments) && !widget.isLoading;
+    final allAttachmentsReady = _allAttachmentsReady(chatState);
+
+    // Отправка доступна, если есть текст или вложения,
+    // нет активной отправки, и все вложения готовы.
+    final canSend =
+        (_hasText || hasAttachments) &&
+        !widget.isLoading &&
+        allAttachmentsReady;
+
     final canAttach = _canAttach(chatState, sessionState.agentId);
 
     return Container(

@@ -5,7 +5,6 @@ import '../domain/models/message.dart';
 import '../theme/app_theme.dart';
 import 'attachment_preview.dart';
 import 'typing_indicator.dart';
-import '../core/logger/app_logger.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -23,13 +22,6 @@ class MessageBubble extends StatelessWidget {
 
     final bool showTypingIndicator =
         !isFromUser && message.text.isEmpty && isStreaming;
-
-    // ✅ Логируем ТОЛЬКО если текст пустой ИЛИ isStreaming=true
-    if (!isFromUser && (message.text.isEmpty || isStreaming)) {
-      AppLogger.debug(
-        '🔍 MessageBubble: text="${message.text}", isEmpty=${message.text.isEmpty}, isStreaming=$isStreaming, show=$showTypingIndicator',
-      );
-    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 16.0),

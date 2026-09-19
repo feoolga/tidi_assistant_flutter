@@ -74,8 +74,6 @@ class SendMessageUseCase {
   ///
   /// Возвращает поток `ChatResponseDto`.
   Stream<ChatResponseDto> execute(SendMessageParams params) {
-    AppLogger.info('Отправка сообщения: "${params.text}"');
-
     final controller = StreamController<ChatResponseDto>();
     _sendAndProcess(params, controller);
     return controller.stream;
