@@ -108,7 +108,15 @@ class AttachmentRepository {
       // ErrorHandler.handleFileUpload превращает NetworkException
       // в FileException.uploadFailed — потому что в контексте загрузки
       // файла «нет сети» = «не удалось загрузить файл».
-      throw ErrorHandler.handleFileUpload(e, stackTrace);
+      throw ErrorHandler.handleFileUpload(
+        e,
+        stackTrace,
+        'Ошибка при загрузке файла на сервер',
+        {
+          'fileName': file.uri.pathSegments.last,
+          'conversationId': conversationId,
+        },
+      );
     }
   }
 
@@ -232,7 +240,12 @@ class AttachmentRepository {
   /// **всех** неспецифичных ошибок. Там `ServerException` превратится
   /// в `FileException.uploadFailed` с текстом от сервера в `technicalDetails`.
   FileException _asUploadFailed(ServerException error, StackTrace? stackTrace) {
-    final result = ErrorHandler.handleFileUpload(error, stackTrace);
+    final result = ErrorHandler.handleFileUpload(
+      error,
+      stackTrace,
+      'Не удалось загрузить файл (HTTP ${error.statusCode})',
+      {'statusCode': error.statusCode},
+    );
     // handleFileUpload возвращает AppException — но в контексте
     // загрузки файла это **всегда** FileException. Кастуем безопасно.
     return result as FileException;

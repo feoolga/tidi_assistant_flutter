@@ -1,55 +1,81 @@
 // lib/core/errors/error_handler.dart
 
 import 'dart:async';
+
 import 'package:http/http.dart' as http;
+
+import '../logger/app_logger.dart';
+import 'app_exception.dart';
+import 'file_exceptions.dart';
 import 'network_exceptions.dart';
 import 'server_exceptions.dart';
-import 'file_exceptions.dart';
-import 'app_exception.dart';
 
 /// Универсальный обработчик ошибок.
 ///
-/// Превращает любые исключения в AppException.
-/// Используется во всех слоях приложения.
+/// **Ответственность:**
+/// - превращает любое исключение в [AppException];
+/// - логирует ошибку с `stackTrace` и человеческим контекстом.
 ///
-/// Основной метод — [handle] — для обычных запросов.
-/// Для специфичных контекстов (например, загрузка файлов) есть
-/// отдельные методы, чтобы пользователь видел правильное сообщение.
+/// **Единая точка логирования.** Вызывающий код **не** должен
+/// логировать ошибку **до** вызова [handle] — иначе получится дубль.
+/// Вместо этого — передаём **контекст** («Не удалось загрузить агентов»)
+/// и **данные контекста** (например, `{'agentId': 'epoz'}`) **в** [handle].
 class ErrorHandler {
   // ============================================================
   // 1. ОБЩИЙ ОБРАБОТЧИК
   // ============================================================
 
-  /// Обработать ошибку и вернуть AppException.
+  /// Обработать ошибку: преобразовать в [AppException] и **залогировать**.
   ///
-  /// Используется для обычных запросов: получение агентов, чатов,
-  /// отправка сообщений. Для загрузки файлов — см. [handleFileUpload].
+  /// **Порядок действий:**
+  /// 1. Если ошибка уже [AppException] — пропускаем как есть.
+  /// 2. Иначе — преобразуем в подходящий тип:
+  ///    - [http.ClientException] → [NetworkException.connectionError];
+  ///    - [TimeoutException] → [NetworkException.timeout];
+  ///    - [FormatException] → [ServerException.parseError];
+  ///    - всё остальное → [UnknownException].
+  /// 3. Логируем через [AppLogger.logException] — с `stackTrace`,
+  ///    человеческим контекстом и данными контекста.
   ///
-  /// [stackTrace] не используется здесь, но принимается для единообразия
-  /// API и на случай, если решим логировать прямо в обработчике.
-  static AppException handle(dynamic error, [StackTrace? stackTrace]) {
-    // Если это уже AppException — просто возвращаем
-    if (error is AppException) {
-      return error;
-    }
+  /// **Параметры:**
+  /// - [error] — любое исключение или ошибка;
+  /// - [stackTrace] — опциональный, но **настоятельно рекомендуется**
+  ///   передавать из `catch (e, stackTrace)`. Если не передан — используем
+  ///   [StackTrace.current] (укажет на место вызова `handle`, не на источник
+  ///   ошибки) и **предупредим в логе**;
+  /// - [context] — человеческое описание операции: «Не удалось загрузить
+  ///   агентов», «Ошибка в sendMessage». **Опционально**; если не передан —
+  ///   используется общий fallback с типом ошибки;
+  /// - [contextData] — структурированные данные операции: `{'agentId': ...,
+  ///   'conversationId': ...}`. **Опционально**. Пригодится для отладки
+  ///   и будущей интеграции с Sentry/Crashlytics.
+  ///
+  /// **Пример:**
+  /// ```dart
+  /// try {
+  ///   final response = await _api.getModels();
+  ///   ...
+  /// } catch (e, stackTrace) {
+  ///   throw ErrorHandler.handle(e, stackTrace, 'Не удалось загрузить агентов');
+  /// }
+  /// ```
+  static AppException handle(
+    dynamic error, [
+    StackTrace? stackTrace,
+    String? context,
+    Map<String, dynamic>? contextData,
+  ]) {
+    final effectiveStackTrace = _ensureStackTrace(stackTrace);
+    final appException = _convert(error);
 
-    // Ошибка сети (http.ClientException)
-    if (error is http.ClientException) {
-      return NetworkException.connectionError(error);
-    }
+    _log(
+      error: appException,
+      stackTrace: effectiveStackTrace,
+      context: context,
+      contextData: contextData,
+    );
 
-    // Timeout
-    if (error is TimeoutException) {
-      return NetworkException.timeout(error);
-    }
-
-    // Ошибка формата JSON
-    if (error is FormatException) {
-      return ServerException.parseError(error);
-    }
-
-    // Все остальные ошибки
-    return UnknownException.from(error);
+    return appException;
   }
 
   // ============================================================
@@ -58,58 +84,82 @@ class ErrorHandler {
 
   /// Обработать ошибку, возникшую при загрузке файла.
   ///
-  /// Отличается от [handle] сообщениями для пользователя: в контексте
+  /// Отличается от [handle] **сообщениями** для пользователя: в контексте
   /// загрузки файла он должен видеть не «сервер не отвечает», а
   /// «не удалось загрузить файл».
   ///
-  /// **Что делает:**
-  /// - [FileException] пропускает как есть — это уже готовый результат;
-  /// - [NetworkException] переводит в [FileException.uploadFailed]
-  ///   (в контексте загрузки файла «нет сети» = «не удалось загрузить»);
-  /// - [ServerException] переводит в [FileException.uploadFailed]
-  ///   (это fallback — обычно `AttachmentRepository` разбирает
-  ///   `ServerException` сам по статусам);
-  /// - прочие [AppException] (бизнес-исключения) пропускает;
-  /// - `http.ClientException`, `TimeoutException`, `FormatException`
-  ///   и всё остальное — переводит в [FileException.uploadFailed].
+  /// **Логика:**
+  /// - [FileException] пропускаем как есть (это уже готовый результат);
+  /// - [NetworkException] переводим в [FileException.uploadFailed];
+  /// - [ServerException] переводим в [FileException.uploadFailed]
+  ///   (fallback — обычно `AttachmentRepository` разбирает его сам);
+  /// - прочие [AppException] пропускаем;
+  /// - транспортные (`http.ClientException`, `TimeoutException`,
+  ///   `FormatException`) и всё остальное → [FileException.uploadFailed].
   ///
-  /// **Чего не делает:**
-  /// Не разбирает HTTP-статусы (413, 400, 502) — это работа
-  /// `AttachmentRepository`, у которого есть контекст операции.
+  /// **Логирует так же, как [handle].**
   static AppException handleFileUpload(
     dynamic error, [
     StackTrace? stackTrace,
+    String? context,
+    Map<String, dynamic>? contextData,
   ]) {
-    // 1. FileException — уже готовый результат, пропускаем.
-    //    Сюда попадают: валидация до отправки, классификаторы в репозитории.
-    if (error is FileException) {
-      return error;
-    }
+    final effectiveStackTrace = _ensureStackTrace(stackTrace);
+    final appException = _convertFileUpload(error);
 
-    // 2. NetworkException — переводим в uploadFailed.
-    //    Ключевой случай: клиент бросает NetworkException, но
-    //    в контексте загрузки файла пользователь должен увидеть
-    //    «не удалось загрузить файл», а не «нет соединения».
+    _log(
+      error: appException,
+      stackTrace: effectiveStackTrace,
+      context: context,
+      contextData: contextData,
+    );
+
+    return appException;
+  }
+
+  // ============================================================
+  // 3. ПРЕОБРАЗОВАНИЕ (БЕЗ ЛОГИРОВАНИЯ)
+  // ============================================================
+
+  /// Преобразовать любое исключение в [AppException] для общего контекста.
+  ///
+  /// **Не логирует** — логирование делает [handle].
+  static AppException _convert(dynamic error) {
+    if (error is AppException) return error;
+    if (error is http.ClientException) {
+      return NetworkException.connectionError(error);
+    }
+    if (error is TimeoutException) {
+      return NetworkException.timeout(error);
+    }
+    if (error is FormatException) {
+      return ServerException.parseError(error);
+    }
+    return UnknownException.from(error);
+  }
+
+  /// Преобразовать любое исключение в [AppException] для контекста
+  /// загрузки файла.
+  ///
+  /// **Не логирует** — логирование делает [handleFileUpload].
+  static AppException _convertFileUpload(dynamic error) {
+    // FileException — уже готовый, пропускаем.
+    if (error is FileException) return error;
+
+    // NetworkException — переводим в uploadFailed.
     if (error is NetworkException) {
       return FileException.uploadFailed(error);
     }
 
-    // 3. ServerException — fallback.
-    //    Репозиторий обычно разбирает ServerException сам (по статусам),
-    //    но если не разобрал (неизвестный статус) — превращаем в общий.
+    // ServerException — fallback (обычно репозиторий разбирает его сам).
     if (error is ServerException) {
       return FileException.uploadFailed(error);
     }
 
-    // 4. Прочие AppException — пропускаем.
-    //    Например, BusinessException — в контексте загрузки файла
-    //    они не должны появляться, но если появились — не глушим.
-    if (error is AppException) {
-      return error;
-    }
+    // Прочие AppException (бизнес-исключения) — пропускаем.
+    if (error is AppException) return error;
 
-    // 5. Транспортные и парсинговые — на случай, если что-то
-    //    не обёрнуто клиентом.
+    // Транспортные и парсинговые — на случай, если что-то не обёрнуто.
     if (error is http.ClientException) {
       return FileException.uploadFailed(error);
     }
@@ -120,30 +170,57 @@ class ErrorHandler {
       return FileException.uploadFailed(error);
     }
 
-    // 6. Всё остальное — общий uploadFailed.
+    // Всё остальное — общий uploadFailed.
     return FileException.uploadFailed(error);
   }
+
   // ============================================================
-  // 3. БРОСАНИЕ
+  // 4. ЛОГИРОВАНИЕ (ОБЩЕЕ)
   // ============================================================
 
-  /// Обработать и выбросить AppException.
-  static void throwAppException(dynamic error, [StackTrace? stackTrace]) {
-    throw handle(error, stackTrace);
+  /// Залогировать обработанную ошибку.
+  ///
+  /// Один приватный метод, потому что [handle] и [handleFileUpload]
+  /// логируют одинаково. Меняем формат лога — меняем **здесь**.
+  static void _log({
+    required AppException error,
+    required StackTrace stackTrace,
+    String? context,
+    Map<String, dynamic>? contextData,
+  }) {
+    // Если context передан — используем его как message.
+    // Иначе — общий fallback с типом ошибки.
+    final logMessage = context ?? 'Ошибка обработана: ${error.runtimeType}';
+
+    AppLogger.logException(logMessage, error, stackTrace, contextData);
   }
 
-  /// Обработать и выбросить AppException в контексте загрузки файла.
-  ///
-  /// Сахар для `throw handleFileUpload(...)`.
+  // ============================================================
+  // 5. БРОСАНИЕ
+  // ============================================================
+
+  /// Обработать и выбросить [AppException].
+  static void throwAppException(
+    dynamic error, [
+    StackTrace? stackTrace,
+    String? context,
+    Map<String, dynamic>? contextData,
+  ]) {
+    throw handle(error, stackTrace, context, contextData);
+  }
+
+  /// Обработать и выбросить [AppException] в контексте загрузки файла.
   static void throwFileUploadException(
     dynamic error, [
     StackTrace? stackTrace,
+    String? context,
+    Map<String, dynamic>? contextData,
   ]) {
-    throw handleFileUpload(error, stackTrace);
+    throw handleFileUpload(error, stackTrace, context, contextData);
   }
 
   // ============================================================
-  // 4. ХЕЛПЕРЫ
+  // 6. ХЕЛПЕРЫ
   // ============================================================
 
   /// Получить сообщение для пользователя из ошибки.
@@ -154,12 +231,28 @@ class ErrorHandler {
     return 'Произошла непредвиденная ошибка. Попробуйте позже.';
   }
 
-  /// Получить код ошибки для логирования.
+  /// Получить код ошибки для логирования/аналитики.
   static String getErrorCode(dynamic error) {
     if (error is AppException) {
       return error.code;
     }
     return 'UNKNOWN_ERROR';
+  }
+
+  /// Гарантировать наличие `stackTrace`.
+  ///
+  /// Если `stackTrace` не передан — используем [StackTrace.current]
+  /// (укажет на место вызова `handle`, не на источник ошибки)
+  /// и **предупреждаем в логе**. Это помогает находить забытые
+  /// `catch (e)` без `stackTrace`.
+  static StackTrace _ensureStackTrace(StackTrace? stackTrace) {
+    if (stackTrace != null) return stackTrace;
+
+    AppLogger.warning(
+      'ErrorHandler вызван без stackTrace. Передавайте stackTrace '
+      'из catch (e, stackTrace) — иначе теряется место ошибки.',
+    );
+    return StackTrace.current;
   }
 }
 
@@ -170,8 +263,7 @@ class ErrorHandler {
 /// Неизвестная ошибка (fallback).
 ///
 /// Используется [ErrorHandler.handle], когда ошибка не подошла
-/// ни под одну известную категорию. Живёт в этом же файле, потому что
-/// тесно связан с `ErrorHandler` и используется только им.
+/// ни под одну известную категорию.
 class UnknownException extends AppException {
   const UnknownException({
     required super.code,

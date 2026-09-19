@@ -78,8 +78,7 @@ class ChatRepository {
       AppLogger.info('Загружено агентов: ${agents.length}');
       return agents;
     } catch (e, stackTrace) {
-      AppLogger.logException('Не удалось загрузить агентов', e, stackTrace);
-      throw ErrorHandler.handle(e, stackTrace);
+      throw ErrorHandler.handle(e, stackTrace, 'Не удалось загрузить агентов');
     }
   }
 
@@ -111,10 +110,9 @@ class ChatRepository {
       AppLogger.info('Роутер выбрал агента: $agentId');
       return agentId;
     } catch (e, stackTrace) {
-      AppLogger.logException('Не удалось определить агента', e, stackTrace, {
+      throw ErrorHandler.handle(e, stackTrace, 'Не удалось определить агента', {
         'message_length': message.length,
       });
-      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
@@ -160,13 +158,12 @@ class ChatRepository {
       AppLogger.info('Чат создан: ${session.id}');
       return session;
     } catch (e, stackTrace) {
-      AppLogger.logException(
-        'Не удалось создать чат для агента $agentId',
+      throw ErrorHandler.handle(
         e,
         stackTrace,
+        'Не удалось создать чат для агента $agentId',
         {'agentId': agentId, 'title': title},
       );
-      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
@@ -201,22 +198,20 @@ class ChatRepository {
       }
 
       // Все остальные серверные ошибки — пробрасываем.
-      AppLogger.logException(
-        'Не удалось загрузить чаты агента $agentId',
+      throw ErrorHandler.handle(
         e,
         stackTrace,
+        'Не удалось загрузить чаты агента $agentId',
         {'agentId': agentId},
       );
-      throw ErrorHandler.handle(e, stackTrace);
     } catch (e, stackTrace) {
       // Транспортные ошибки, невалидный JSON — сюда.
-      AppLogger.logException(
-        'Не удалось загрузить чаты агента $agentId',
+      throw ErrorHandler.handle(
         e,
         stackTrace,
+        'Не удалось загрузить чаты агента $agentId',
         {'agentId': agentId},
       );
-      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
@@ -257,21 +252,19 @@ class ChatRepository {
         throw BusinessException.chatNotFound(conversationId);
       }
 
-      AppLogger.logException(
-        'Не удалось загрузить сообщения чата $conversationId',
+      throw ErrorHandler.handle(
         e,
         stackTrace,
+        'Не удалось загрузить сообщения чата $conversationId',
         {'agentId': agentId, 'conversationId': conversationId},
       );
-      throw ErrorHandler.handle(e, stackTrace);
     } catch (e, stackTrace) {
-      AppLogger.logException(
-        'Не удалось загрузить сообщения чата $conversationId',
+      throw ErrorHandler.handle(
         e,
         stackTrace,
+        'Не удалось загрузить сообщения чата $conversationId',
         {'agentId': agentId, 'conversationId': conversationId},
       );
-      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 
@@ -313,17 +306,16 @@ class ChatRepository {
       AppLogger.debug('📥 Получен ответ: ${response.statusCode}');
       return response;
     } catch (e, stackTrace) {
-      AppLogger.logException(
-        'Ошибка при отправке стрим-запроса',
+      throw ErrorHandler.handle(
         e,
         stackTrace,
+        'Ошибка при отправке стрим-запроса',
         {
           'agentId': agentId,
           'conversationId': conversationId,
           'attachments_count': attachments.length,
         },
       );
-      throw ErrorHandler.handle(e, stackTrace);
     }
   }
 

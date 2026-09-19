@@ -381,11 +381,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
       _replacePendingAttachment(localId, uploaded);
       AppLogger.info('Вложение загружено: ${uploaded.remoteId}');
     } catch (e, stackTrace) {
-      final appException = ErrorHandler.handleFileUpload(e, stackTrace);
-      AppLogger.logException(
-        'Ошибка прикрепления файла',
-        appException,
+      final appException = ErrorHandler.handleFileUpload(
+        e,
         stackTrace,
+        'Ошибка прикрепления файла',
+        {'fileName': file.uri.pathSegments.last, 'localId': localId},
       );
 
       if (localId != null) {
@@ -568,8 +568,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
       }
     } catch (e, stackTrace) {
-      final appException = ErrorHandler.handle(e, stackTrace);
-      AppLogger.logException('Ошибка в sendMessage', appException, stackTrace);
+      final appException = ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Ошибка в sendMessage',
+        {'text_length': text.length, 'attachments_count': attachments.length},
+      );
       _removeEmptyAiMessageIfAny();
       _setError(appException.userMessage);
     } finally {
@@ -609,8 +613,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       AppLogger.info('Загружено сообщений: ${messages.length}');
     } catch (e, stackTrace) {
-      final appException = ErrorHandler.handle(e, stackTrace);
-      AppLogger.logException('Ошибка в loadChat', appException, stackTrace);
+      final appException = ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Ошибка в loadChat',
+        {'agentId': agentId, 'chatId': chatId},
+      );
       _setError(appException.userMessage);
     } finally {
       _setLoading(false);

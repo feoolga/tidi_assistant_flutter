@@ -164,6 +164,9 @@ class SendMessageUseCase {
         // упрощённую форму.
         if (eventType == 'error') {
           final appException = _parseErrorEvent(event);
+          // Логируем напрямую: ошибка уже AppException (создана в
+          // _parseErrorEvent), ErrorHandler.handle здесь не нужен.
+
           AppLogger.logException(
             'Ошибка в SSE-потоке (event: error)',
             appException,
@@ -185,8 +188,12 @@ class SendMessageUseCase {
       await controller.close();
     } catch (error, stackTrace) {
       // Транспортные ошибки, HTTP-ошибки, ошибки парсинга — сюда.
-      final appException = ErrorHandler.handle(error, stackTrace);
-      AppLogger.logException('Ошибка в SSE-потоке', appException, stackTrace);
+      final appException =
+          ErrorHandler.handle(error, stackTrace, 'Ошибка в SSE-потоке', {
+            'agentId': params.agentId,
+            'sessionId': params.sessionId,
+            'attachments_count': params.attachments.length,
+          });
 
       controller.addError(appException);
       await controller.close();

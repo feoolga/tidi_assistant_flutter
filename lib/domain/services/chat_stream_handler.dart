@@ -66,8 +66,11 @@ class ChatStreamHandler {
         }
       },
       onError: (Object error, StackTrace stackTrace) {
-        final appException = ErrorHandler.handle(error);
-        AppLogger.logException('Ошибка в SSE-стриме', appException, stackTrace);
+        final appException = ErrorHandler.handle(
+          error,
+          stackTrace, // ← передаём — handle сам залогирует
+          'Ошибка в SSE-стриме',
+        );
 
         if (!isClosed) {
           isClosed = true;
