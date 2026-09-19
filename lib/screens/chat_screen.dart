@@ -2,8 +2,10 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../core/logger/app_logger.dart';
 import '../providers/chat_provider.dart';
+import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/chat_history_drawer.dart';
 import '../widgets/message_bubble.dart';
@@ -50,7 +52,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
   }
 
-  /// Получить имя агента для отображения в AppBar
+  /// Получить имя агента для отображения в AppBar.
   String _getAgentName(String? agentId) {
     if (agentId == null) return 'AI Ассистент';
 
@@ -68,7 +70,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // ============================================================
 
   void _sendMessage(String text) {
-    // Отправляем сообщение
     ref.read(chatProvider.notifier).sendMessage(text: text);
     Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }
@@ -92,18 +93,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Подписываемся на состояние чата
+    // Подписываемся на состояние чата (сообщения, загрузка, стриминг).
     final chatState = ref.watch(chatProvider);
     final messages = chatState.messages;
     final isLoading = chatState.isLoading;
     final error = chatState.error;
     final infoMessage = chatState.infoMessage;
-    final currentAgentId = chatState.currentAgentId;
 
-    // Показ SnackBar'ов по состоянию — на следующем кадре,
-    // чтобы не вызывать setState во время build.
+    // Сессия — из SSOT (`sessionProvider`), не из `chatState`.
+    // `select` — чтобы `ChatScreen` перестраивался только при смене
+    // `agentId`, а не при каждом изменении сессии.
+    final currentAgentId = ref.watch(sessionProvider.select((s) => s.agentId));
+
+    // Показ SnackBar'ов по состоянию — на следующем кадре.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Ошибка — красный SnackBar.
       if (error != null && error.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -115,7 +118,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ref.read(chatProvider.notifier).clearError();
       }
 
-      // Информационное сообщение — нейтральный SnackBar.
       if (infoMessage != null && infoMessage.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

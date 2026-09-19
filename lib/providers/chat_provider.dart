@@ -1,33 +1,41 @@
 // lib/providers/chat_provider.dart
 
 import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../core/config/app_config.dart';
-import '../core/logger/app_logger.dart';
 import '../core/errors/error_handler.dart';
 import '../core/errors/file_exceptions.dart';
-import '../domain/models/message.dart';
+import '../core/logger/app_logger.dart';
+import '../data/repositories/chat_repository.dart';
 import '../domain/models/attachment.dart';
+import '../domain/models/message.dart';
 import '../domain/services/chat_stream_event.dart';
 import '../domain/services/chat_stream_handler.dart';
 import '../domain/usecases/send_message_usecase.dart';
 import '../domain/usecases/upload_attachment_usecase.dart';
-import 'session_provider.dart';
 import 'agent_provider.dart';
-import '../data/repositories/chat_repository.dart';
+import 'session_provider.dart';
 
 // ============================================================
 // 1. СОСТОЯНИЕ ЧАТА
 // ============================================================
 
-/// Состояние чата - только сообщения и статус загрузки.
+/// Состояние чата — сообщения, статус загрузки, стриминг, вложения.
+///
+/// **ВАЖНО:** здесь **нет** `agentId` / `sessionId`. Сессия хранится
+/// **только** в `sessionProvider` — единый источник правды (SSOT).
+/// См. `lib/providers/session_provider.dart`.
+///
+/// Раньше эти поля дублировались в `ChatState`, что приводило
+/// к рассинхронизации: `loadChat` обновлял `sessionProvider`,
+/// но не `ChatState` — AppBar показывал старое имя агента.
 class ChatState {
   final List<Message> messages;
   final bool isLoading;
   final String? error;
   final bool isStreaming;
-  final String? currentAgentId;
-  final String? currentConversationId;
 
   /// Вложения, уже загруженные на сервер, но ещё не отправленные
   /// с сообщением. Появляются, когда пользователь нажимает «прикрепить»
@@ -54,8 +62,6 @@ class ChatState {
     this.isLoading = false,
     this.error,
     this.isStreaming = false,
-    this.currentAgentId,
-    this.currentConversationId,
     this.pendingAttachments = const [],
     this.infoMessage,
     this.isAddingAttachment = false,
@@ -65,8 +71,7 @@ class ChatState {
     return const ChatState();
   }
 
-  // Специальный объект-маркер
-  // Он означает: "это поле не было передано в copyWith"
+  /// Специальный объект-маркер: «это поле не было передано в copyWith».
   static const _unset = Object();
 
   ChatState copyWith({
@@ -74,8 +79,6 @@ class ChatState {
     bool? isLoading,
     Object? error = _unset,
     bool? isStreaming,
-    Object? currentAgentId = _unset,
-    Object? currentConversationId = _unset,
     List<Attachment>? pendingAttachments,
     Object? infoMessage = _unset,
     bool? isAddingAttachment,
@@ -85,12 +88,6 @@ class ChatState {
       isLoading: isLoading ?? this.isLoading,
       error: identical(error, _unset) ? this.error : error as String?,
       isStreaming: isStreaming ?? this.isStreaming,
-      currentAgentId: identical(currentAgentId, _unset)
-          ? this.currentAgentId
-          : currentAgentId as String?,
-      currentConversationId: identical(currentConversationId, _unset)
-          ? this.currentConversationId
-          : currentConversationId as String?,
       pendingAttachments: pendingAttachments ?? this.pendingAttachments,
       infoMessage: identical(infoMessage, _unset)
           ? this.infoMessage
@@ -115,14 +112,13 @@ class ChatState {
 
 class ChatNotifier extends StateNotifier<ChatState> {
   /// Ссылка на Riverpod — нужна, чтобы читать другие провайдеры
-  /// (например, `sessionProvider`) из методов Notifier'а.
+  /// (в частности, `sessionProvider` — SSOT сессии).
   final Ref _ref;
 
   final ChatRepository _repository;
   final SendMessageUseCase _sendMessageUseCase;
   final UploadAttachmentUseCase _uploadAttachmentUseCase;
   final ChatStreamHandler _streamHandler;
-  final void Function(String agentId, String sessionId)? onSessionChanged;
 
   ChatNotifier({
     required Ref ref,
@@ -130,7 +126,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     required SendMessageUseCase sendMessageUseCase,
     required UploadAttachmentUseCase uploadAttachmentUseCase,
     required ChatStreamHandler streamHandler,
-    this.onSessionChanged,
   }) : _ref = ref,
        _repository = repository,
        _sendMessageUseCase = sendMessageUseCase,
@@ -162,14 +157,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   void _setAddingAttachment(bool value) {
     state = state.copyWith(isAddingAttachment: value);
-  }
-
-  void _setCurrentAgent(String? agentId) {
-    state = state.copyWith(currentAgentId: agentId);
-  }
-
-  void _setCurrentConversationId(String? conversationId) {
-    state = state.copyWith(currentConversationId: conversationId);
   }
 
   void _setStreaming(bool isStreaming) {
@@ -218,21 +205,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   /// Удалить вложение из `pendingAttachments` по `localId`.
-  ///
-  /// Если вложение не найдено — состояние не трогаем (чтобы не вызывать
-  /// лишний rebuild у слушателей). Используется в публичном
-  /// [removeAttachment] и при очистке чата.
   void _removePendingAttachment(String localId) {
     final current = state.pendingAttachments;
     final newList = current.where((a) => a.localId != localId).toList();
 
-    // Ничего не удалили — не трогаем состояние.
     if (newList.length == current.length) return;
 
     state = state.copyWith(pendingAttachments: newList);
   }
 
-  /// Обновляет текст последнего сообщения AI
+  /// Обновляет текст последнего сообщения AI.
   void _updateMessageText(String text) {
     final currentMessages = state.messages;
     if (currentMessages.isEmpty) return;
@@ -248,7 +230,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  /// Завершает ответ — обновляет метаданные последнего сообщения AI
+  /// Завершает ответ — обновляет метаданные последнего сообщения AI.
   void _completeMessage({
     required String? agentId,
     required String? sessionId,
@@ -273,7 +255,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  /// Удаляет пустое AI-сообщение (если есть) — используется при ошибке
+  /// Удаляет пустое AI-сообщение (если есть) — используется при ошибке.
   void _removeEmptyAiMessageIfAny() {
     final currentMessages = state.messages;
     if (currentMessages.isEmpty) return;
@@ -293,18 +275,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
   ///
   /// Полный флоу:
   /// 1. Валидация: количество, размер, MIME, дубликат.
-  /// 2. Создание `Attachment(status: pending)` и добавление в `pendingAttachments`
-  ///    — чтобы UI сразу показал превью со спиннером.
-  /// 3. При необходимости — создание чата у `document_chat` (файлы работают
-  ///    только через этого агента; в чужом чате кнопка «прикрепить» заблокирована).
+  /// 2. Создание `Attachment(status: pending)` и добавление в `pendingAttachments`.
+  /// 3. При необходимости — создание чата у `document_chat`.
   /// 4. Загрузка файла через [UploadAttachmentUseCase].
   /// 5. Замена `pending`-вложения на `done` (или `failed` при ошибке).
   ///
   /// Защищена от race: если предыдущее прикрепление ещё в процессе —
-  /// выходим без изменений. Флаг сбрасывается в `finally` в любом случае.
+  /// выходим без изменений. Флаг сбрасывается в `finally`.
   Future<void> addAttachment(File file) async {
-    // Защита от race condition: пока одна загрузка идёт, вторую не начинаем.
-    // Проверяем через `ChatState.isAddingAttachment` — один источник правды.
     if (state.isAddingAttachment) {
       AppLogger.warning(
         'Прикрепление уже в процессе — пропускаем повторный вызов',
@@ -312,20 +290,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
       return;
     }
 
-    // В чужом чате файлы сейчас не поддерживаются (решение техдира — в работе).
-    // Кнопка «прикрепить» в UI тоже блокируется, здесь — вторая линия защиты.
+    // В чужом чате файлы сейчас не поддерживаются.
     final sessionState = _ref.read(sessionProvider);
     if (sessionState.agentId != null &&
         sessionState.agentId != 'document_chat') {
       AppLogger.warning(
-        'Прикрепление файла в чате агента ${sessionState.agentId} не поддерживается',
+        'Прикрепление файла в чате агента ${sessionState.agentId} '
+        'не поддерживается',
       );
       return;
     }
 
     _setAddingAttachment(true);
 
-    // Отдельная переменная — чтобы в catch знать, какой localId поставить failed.
     String? localId;
 
     try {
@@ -354,8 +331,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         throw FileException.unsupportedFormat(mimeType: mimeType);
       }
 
-      // 3. Проверка дубликата: тот же fileName + sizeBytes уже прикреплён
-      //    (включая записи со status: failed — их надо удалить вручную).
+      // 3. Проверка дубликата.
       final isDuplicate = state.pendingAttachments.any(
         (a) => a.fileName == fileName && a.sizeBytes == sizeBytes,
       );
@@ -385,12 +361,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
         );
         conversationId = session.id;
 
-        // Синхронизируем sessionProvider (через callback — как при отправке).
-        onSessionChanged?.call('document_chat', conversationId);
-
-        // Обновляем локальное состояние — UI увидит смену агента в AppBar.
-        _setCurrentAgent('document_chat');
-        _setCurrentConversationId(conversationId);
+        // Обновляем SSOT — sessionProvider. UI читает agentId
+        // напрямую из sessionProvider, поэтому сразу увидит смену агента.
+        _ref
+            .read(sessionProvider.notifier)
+            .setSession('document_chat', conversationId);
       }
 
       // 6. Загружаем файл.
@@ -406,9 +381,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
       _replacePendingAttachment(localId, uploaded);
       AppLogger.info('Вложение загружено: ${uploaded.remoteId}');
     } catch (e, stackTrace) {
-      // Преобразуем в AppException.
-      // FileException'ы (валидация, ошибки загрузки) уже AppException —
-      // handleFileUpload вернёт их как есть.
       final appException = ErrorHandler.handleFileUpload(e, stackTrace);
       AppLogger.logException(
         'Ошибка прикрепления файла',
@@ -416,7 +388,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         stackTrace,
       );
 
-      // Обновляем pending-версию до failed, если она уже была добавлена.
       if (localId != null) {
         final failed = state.pendingAttachments
             .firstWhere(
@@ -438,23 +409,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   /// Удалить прикреплённый файл из `pendingAttachments` по `localId`.
-  ///
-  /// Файл на сервере НЕ удаляем: он привязан к чату и продолжит жить
-  /// (см. README `document_chat` — файл живёт до конца чата). Локально
-  /// же он уходит из списка «на отправку» и больше не попадёт
-  /// в следующее сообщение.
-  ///
-  /// Позже, если понадобится — можно добавить вызов
-  /// `DELETE /agents/document_chat/v1/files/{id}` здесь.
   void removeAttachment(String localId) {
     AppLogger.info('Удаление вложения: $localId');
     _removePendingAttachment(localId);
   }
 
   /// Полностью очистить список прикреплённых файлов.
-  ///
-  /// Используется при создании нового чата и очистке — чтобы вложения
-  /// из предыдущего чата не «утекли» в новый.
   void _clearPendingAttachments() {
     if (state.pendingAttachments.isEmpty) return;
     state = state.copyWith(pendingAttachments: const []);
@@ -473,17 +433,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
   ///
   /// Вложения из `pendingAttachments` передаются в сообщение и в запрос;
   /// после успешной отправки список очищается.
-  ///
-  /// Защищена от повторного вызова: пока `state.isLoading == true` —
-  /// выходим сразу. UI и так блокирует кнопку, здесь — вторая линия.
   Future<void> sendMessage({required String text}) async {
     if (state.isLoading) {
       AppLogger.warning('Отправка уже в процессе — пропускаем повторный вызов');
       return;
     }
 
-    // Снимок актуальных вложений — до любых await, чтобы не потерять их
-    // при возможных изменениях состояния в процессе отправки.
     final attachments = List<Attachment>.from(state.pendingAttachments);
 
     AppLogger.info(
@@ -514,9 +469,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
       var currentSessionId = _ref.read(sessionProvider).sessionId;
 
       if (currentSessionId == null) {
-        // Вложения без сессии — сценарий не должен случаться:
-        // chat создаётся в addAttachment. Если всё-таки пришли сюда —
-        // не создаём документ-чат неявно, а выходим с предупреждением.
         if (attachments.isNotEmpty) {
           AppLogger.warning(
             'Есть вложения, но нет сессии — пропускаем отправку. '
@@ -537,10 +489,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
         );
         currentSessionId = session.id;
 
-        // Синхронизируем sessionProvider и локальное состояние.
-        onSessionChanged?.call(currentAgentId, currentSessionId);
-        _setCurrentAgent(currentAgentId);
-        _setCurrentConversationId(currentSessionId);
+        // Обновляем SSOT — sessionProvider.
+        // UI читает agentId/sessionId напрямую оттуда, поэтому
+        // agentId и sessionId здесь гарантированно non-null:
+        // getRoute возвращает String, ChatSession.id — String.
+        _ref
+            .read(sessionProvider.notifier)
+            .setSession(currentAgentId, currentSessionId);
 
         AppLogger.info(
           'Чат создан: agent=$currentAgentId, session=$currentSessionId',
@@ -584,11 +539,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
               messageId: messageId,
             );
 
-            if (agentId != null) {
-              _setCurrentAgent(agentId);
-            }
-            if (conversationId != null) {
-              _setCurrentConversationId(conversationId);
+            // Обновляем SSOT, только если сервер прислал **полную** пару.
+            // Иначе оставляем как есть — sessionProvider уже правильный
+            // (обновили при создании чата).
+            if (agentId != null && conversationId != null) {
+              _ref
+                  .read(sessionProvider.notifier)
+                  .setSession(agentId, conversationId);
             }
 
             AppLogger.info('✅ Ответ получен полностью');
@@ -597,13 +554,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
             AppLogger.debug('   📌 ID сообщения: $messageId');
             AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
 
-            // Уведомляем о смене сессии, если она изменилась.
-            if (conversationId != null && agentId != null) {
-              onSessionChanged?.call(agentId, conversationId);
-            }
-
             // Отправка прошла — вложения «переехали» в историю сообщений.
-            // Из pending их убираем, чтобы не улетели со следующим вопросом.
             _clearPendingAttachments();
             break;
 
@@ -611,12 +562,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
             AppLogger.logException('Ошибка в стриме', error);
             _removeEmptyAiMessageIfAny();
             _setError(error.userMessage);
-            // pendingAttachments НЕ очищаем — пользователь может попробовать снова.
+            // pendingAttachments НЕ очищаем — пользователь может
+            // попробовать снова.
             break;
         }
       }
     } catch (e, stackTrace) {
-      final appException = ErrorHandler.handle(e);
+      final appException = ErrorHandler.handle(e, stackTrace);
       AppLogger.logException('Ошибка в sendMessage', appException, stackTrace);
       _removeEmptyAiMessageIfAny();
       _setError(appException.userMessage);
@@ -631,6 +583,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
   // ЗАГРУЗКА И УПРАВЛЕНИЕ ЧАТОМ
   // ============================================================
 
+  /// Загрузить чат из истории.
+  ///
+  /// Загружает сообщения чата и обновляет SSOT-сессию.
+  ///
+  /// Обновление `sessionProvider` — критично: без него AppBar
+  /// показывал бы старое имя агента при открытии чата из истории.
+  /// Раньше сессия дублировалась в `ChatState` и могла рассинхронизироваться;
+  /// теперь такого класса проблем нет — сессия живёт в одном месте.
   Future<void> loadChat(String agentId, String chatId) async {
     AppLogger.info('Загрузка чата: агент=$agentId, чат=$chatId');
 
@@ -644,38 +604,48 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
       _setMessages(messages);
 
-      onSessionChanged?.call(agentId, chatId);
+      // Обновляем SSOT — AppBar сразу покажет нужного агента.
+      _ref.read(sessionProvider.notifier).setSession(agentId, chatId);
 
       AppLogger.info('Загружено сообщений: ${messages.length}');
-    } catch (e) {
-      final appException = ErrorHandler.handle(e);
-      AppLogger.logException('Ошибка в loadChat', appException);
+    } catch (e, stackTrace) {
+      final appException = ErrorHandler.handle(e, stackTrace);
+      AppLogger.logException('Ошибка в loadChat', appException, stackTrace);
       _setError(appException.userMessage);
     } finally {
       _setLoading(false);
     }
   }
 
+  /// Создать новый чат (визуально очистить поле).
+  ///
+  /// Сессия сбрасывается в `sessionProvider` — значит, `AppBar`
+  /// сразу покажет «AI Ассистент» (агент не выбран).
   Future<void> createNewChat() async {
     AppLogger.info('Создание нового чата');
 
     _setMessages([]);
     _addWelcomeMessage();
     _clearError();
-    _setCurrentAgent(null);
-    _setCurrentConversationId(null);
     _clearPendingAttachments();
+
+    _ref.read(sessionProvider.notifier).clearSession();
 
     AppLogger.debug('Новый чат создан');
   }
 
+  /// Очистить текущий чат.
+  ///
+  /// **Осознанное отличие от [createNewChat]:** `clearChat` НЕ сбрасывает
+  /// сессию — пользователь остаётся в том же агенте и чате, но история
+  /// сообщений на экране очищается. Если надо начать полностью новый чат —
+  /// используйте [createNewChat].
   void clearChat() {
     AppLogger.info('Очистка чата');
 
     _setMessages([]);
     _addWelcomeMessage();
     _clearError();
-    _setCurrentConversationId(null);
     _clearPendingAttachments();
   }
 
@@ -692,21 +662,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
 // 3. ПРОВАЙДЕРЫ
 // ============================================================
 
-/// Провайдер для ChatStreamHandler
+/// Провайдер для ChatStreamHandler.
 final chatStreamHandlerProvider = Provider<ChatStreamHandler>((ref) {
   return ChatStreamHandler();
 });
 
-/// Провайдер для SendMessageUseCase
+/// Провайдер для SendMessageUseCase.
 final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
   final repository = ref.read(chatRepositoryProvider);
   return SendMessageUseCase(repository: repository);
 });
 
-/// Провайдер для UploadAttachmentUseCase
-///
-/// Используется в ChatNotifier.addAttachment — грузит файл на сервер
-/// и возвращает доменную модель Attachment.
+/// Провайдер для UploadAttachmentUseCase.
 final uploadAttachmentUseCaseProvider = Provider<UploadAttachmentUseCase>((
   ref,
 ) {
@@ -727,8 +694,5 @@ final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
     sendMessageUseCase: sendMessageUseCase,
     uploadAttachmentUseCase: uploadAttachmentUseCase,
     streamHandler: streamHandler,
-    onSessionChanged: (agentId, sessionId) {
-      ref.read(sessionProvider.notifier).setSession(agentId, sessionId);
-    },
   );
 });
