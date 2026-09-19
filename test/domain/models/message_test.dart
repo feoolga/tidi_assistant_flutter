@@ -46,9 +46,7 @@ void main() {
       text: 'hi',
       isFromUser: false,
       timestamp: DateTime(2026, 1, 1),
-      sources: [
-        {'url': 'x'},
-      ],
+      sources: ['накладная.pdf'],
     );
 
     final cleared = msg.copyWith(sources: null);
