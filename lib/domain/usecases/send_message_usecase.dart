@@ -1,11 +1,14 @@
 // lib/domain/usecases/send_message_usecase.dart
 
 import 'dart:async';
-import '../../data/repositories/chat_repository.dart';
-import '../../data/models/chat_response_dto.dart';
+
+import '../../core/errors/app_exception.dart';
+import '../../core/errors/business_exceptions.dart';
+import '../../core/errors/error_handler.dart';
 import '../../core/logger/app_logger.dart';
 import '../../core/network/sse_parser.dart';
-import '../../core/errors/error_handler.dart';
+import '../../data/models/chat_response_dto.dart';
+import '../../data/repositories/chat_repository.dart';
 import '../models/attachment.dart';
 
 // ============================================================
@@ -50,9 +53,17 @@ class SendMessageParams {
 
 /// UseCase для отправки сообщения.
 ///
-/// Отвечает на вопрос: "Что делает приложение, когда пользователь отправляет сообщение?"
+/// Отвечает на вопрос: «Что делает приложение, когда пользователь
+/// отправляет сообщение?»
 ///
-/// Возвращает поток ChatResponseDto — чистых данных без UI-логики.
+/// Возвращает поток `ChatResponseDto` — чистых данных без UI-логики.
+///
+/// **Обработка ошибок:**
+/// - HTTP-ошибки (404, 502, ...) бросает `ChatRepository` до возврата
+///   стрима — они попадают в общий `catch`;
+/// - ошибки в SSE-потоке (`event: error`) — обрабатываем **здесь**,
+///   превращая в `controller.addError(...)` — чтобы `ChatStreamHandler`
+///   получил `onError` и передал `ChatStreamFailed` в notifier.
 class SendMessageUseCase {
   final ChatRepository _repository;
 
@@ -60,7 +71,8 @@ class SendMessageUseCase {
     : _repository = repository;
 
   /// Выполнить сценарий: отправить сообщение.
-  /// Отправить сообщение и получить поток DTO.
+  ///
+  /// Возвращает поток `ChatResponseDto`.
   Stream<ChatResponseDto> execute(SendMessageParams params) {
     AppLogger.info('Отправка сообщения: "${params.text}"');
 
@@ -74,7 +86,8 @@ class SendMessageUseCase {
     StreamController<ChatResponseDto> controller,
   ) async {
     try {
-      // 1. Отправляем запрос и получаем StreamedResponse
+      // 1. Отправляем запрос и получаем StreamedResponse.
+      //    HTTP-ошибки (>= 400) бросает ChatRepository.
       final response = await _repository.sendMessageStream(
         text: params.text,
         conversationId: params.sessionId,
@@ -82,22 +95,28 @@ class SendMessageUseCase {
         attachments: params.attachments,
       );
 
-      // 2. Парсим SSE-поток
+      // 2. Парсим SSE-поток.
       final eventStream = SseParser.parse(response);
 
-      // 3. Переменные для сборки ответа
+      // 3. Переменные для сборки ответа.
       String fullText = '';
 
-      // 4. Обрабатываем каждое событие
+      // 4. Обрабатываем каждое событие.
       await for (final event in eventStream) {
-        final eventType = event['_event_type'] as String;
+        final eventType = event['_event_type'] as String?;
 
+        // --- Служебные события начала — игнорируем ---
+        if (eventType == 'response.created' ||
+            eventType == 'response.output_item.added' ||
+            eventType == 'response.content_part.added') {
+          continue;
+        }
+
+        // --- Дельта текста — эмитим промежуточный DTO ---
         if (eventType == 'response.output_text.delta') {
-          // Получаем кусочек текста
           final delta = event['delta'] as String? ?? '';
           fullText += delta;
 
-          // ✅ Отправляем частичный DTO (isStreaming = true)
           controller.add(
             ChatResponseDto(
               id: '',
@@ -107,15 +126,17 @@ class SendMessageUseCase {
               isStreaming: true,
             ),
           );
-        } else if (eventType == 'response.completed') {
-          // Извлекаем метаданные из финального события
+          continue;
+        }
+
+        // --- Финал — эмитим финальный DTO и закрываем поток ---
+        if (eventType == 'response.completed') {
           final responseData = event['response'] as Map<String, dynamic>?;
           if (responseData != null) {
             final messageId = responseData['id'] as String?;
             final agentId = responseData['model'] as String?;
             final conversationId = responseData['conversation_id'] as String?;
 
-            // ✅ Отправляем финальный DTO (isStreaming = false)
             controller.add(
               ChatResponseDto(
                 id: messageId ?? '',
@@ -127,24 +148,104 @@ class SendMessageUseCase {
             );
           }
 
-          // Закрываем поток — всё готово
           controller.close();
           return;
         }
-        // Игнорируем остальные служебные события
+
+        // --- Ошибка в стриме (event: error) ---
+        //
+        // README document_chat: «Ошибка в процессе генерации —
+        // `event: error` с sequence_number: 9999».
+        //
+        // Формат тела (по README): JSON с полем `error` в стиле
+        // HTTP-ошибок: {"error": {"message": "...", "type": "server_error"}}.
+        //
+        // Пробуем разные варианты — на случай, если бэкенд присылает
+        // упрощённую форму.
+        if (eventType == 'error') {
+          final appException = _parseErrorEvent(event);
+          AppLogger.logException(
+            'Ошибка в SSE-потоке (event: error)',
+            appException,
+          );
+          controller.addError(appException);
+          await controller.close();
+          return;
+        }
+
+        // --- Всё остальное — логируем, но не ломаем стрим ---
+        // Примеры: response.output_text.done, response.content_part.done,
+        // response.output_item.done — служебные события конца.
+        AppLogger.debug('Пропущено SSE-событие: $eventType');
       }
 
-      // Если поток завершился без response.completed — просто закрываем
-      AppLogger.warning('Поток завершился без финального события');
-      controller.close();
+      // 5. Если поток завершился без response.completed — это нештатно.
+      //    ChatStreamHandler отдельно обработает этот случай через onDone.
+      AppLogger.warning('SSE-поток завершился без response.completed');
+      await controller.close();
     } catch (error, stackTrace) {
-      // Преобразуем ошибку
-      final appException = ErrorHandler.handle(error);
+      // Транспортные ошибки, HTTP-ошибки, ошибки парсинга — сюда.
+      final appException = ErrorHandler.handle(error, stackTrace);
       AppLogger.logException('Ошибка в SSE-потоке', appException, stackTrace);
 
-      // Отправляем ошибку в поток
       controller.addError(appException);
-      controller.close();
+      await controller.close();
     }
+  }
+
+  // ============================================================
+  // 3. РАЗБОР EVENT: ERROR
+  // ============================================================
+
+  /// Превращает `event: error` из SSE-потока в [AppException].
+  ///
+  /// **Формат (по README):** JSON с полем `error`, как в HTTP-ошибках:
+  /// ```json
+  /// {
+  ///   "type": "error",
+  ///   "sequence_number": 9999,
+  ///   "error": {
+  ///     "message": "...",
+  ///     "type": "server_error",
+  ///     "param": null,
+  ///     "code": null
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// **Защитный парсинг:** бэкенд может присылать упрощённую форму
+  /// (`{"message": "..."}`), поэтому пробуем несколько вариантов.
+  /// Если совсем ничего не нашли — общая ошибка «Сервер сообщил об ошибке».
+  ///
+  /// **Возвращаем [BusinessException.streamError]** — потому что это
+  /// **семантическое** событие из **успешного** HTTP-ответа, а не
+  /// транспортная или серверная ошибка уровня HTTP.
+  AppException _parseErrorEvent(Map<String, dynamic> event) {
+    // Вариант 1: `error` — вложенный объект с `message`.
+    final errorObj = event['error'];
+    if (errorObj is Map<String, dynamic>) {
+      final message = errorObj['message'];
+      if (message is String && message.isNotEmpty) {
+        return BusinessException.streamError(message);
+      }
+
+      // `error` есть, но без `message` — возможно, есть `type`.
+      final type = errorObj['type'];
+      if (type is String && type.isNotEmpty) {
+        return BusinessException.streamError('Тип ошибки: $type');
+      }
+    }
+
+    // Вариант 2: `message` лежит прямо в корне события.
+    final message = event['message'];
+    if (message is String && message.isNotEmpty) {
+      return BusinessException.streamError(message);
+    }
+
+    // Вариант 3: ничего не нашли — общее сообщение.
+    // Не падаем, не показываем сырой JSON пользователю.
+    return BusinessException.streamError(
+      'Сервер сообщил об ошибке при генерации ответа',
+    );
   }
 }
