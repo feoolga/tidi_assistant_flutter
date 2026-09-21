@@ -51,15 +51,23 @@ final agentsProvider = FutureProvider<List<Agent>>((ref) async {
   return repository.getAgents();
 });
 
-/// Провайдер для получения агента по ID (НОВЫЙ)
-final agentByIdProvider = Provider.family<Agent?, String>((ref, id) {
-  final agents = ref.watch(agentsProvider);
-  if (agents is AsyncData<List<Agent>>) {
-    try {
-      return agents.value.firstWhere((agent) => agent.id == id);
-    } catch (e) {
-      return null;
-    }
-  }
-  return null;
+/// Провайдер для поиска агента по ID через `Map`.
+///
+/// **Почему `Map`, а не `family`:**
+/// - один провайдер на всё приложение, а не отдельный на каждый `id`;
+/// - поиск O(1) вместо `list.firstWhere(...)` — O(n);
+/// - не нужен `try/catch` вокруг `firstWhere` (он бросает `StateError`);
+/// - `null` при поиске означает ровно одно: «не найден или ещё загружается».
+///
+/// `valueOrNull` возвращает `null`, пока `agentsProvider` в состоянии
+/// `AsyncLoading` или `AsyncError`. В этом случае `Map` пустой — UI
+/// покажет fallback (`?`), как и раньше.
+///
+/// Пример использования:
+/// ```dart
+/// final agent = ref.watch(agentsByIdProvider)[chat.agentId];
+/// ```
+final agentsByIdProvider = Provider<Map<String, Agent>>((ref) {
+  final agents = ref.watch(agentsProvider).valueOrNull ?? const [];
+  return {for (final agent in agents) agent.id: agent};
 });

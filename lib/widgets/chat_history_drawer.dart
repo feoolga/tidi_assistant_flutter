@@ -240,7 +240,7 @@ class _ChatItem extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final agent = ref.watch(agentByIdProvider(chat.agentId));
+    final agent = ref.watch(agentsByIdProvider)[chat.agentId];
 
     return ListTile(
       leading: CircleAvatar(
