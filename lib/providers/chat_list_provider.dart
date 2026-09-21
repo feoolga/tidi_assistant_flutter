@@ -66,9 +66,6 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
   // ---- Зависимости ----
   final ChatRepository _repository;
 
-  /// Кэш агентов (чтобы не запрашивать каждый раз).
-  List<Agent>? _cachedAgents;
-
   // ---- Конструктор ----
   ChatListNotifier({required ChatRepository repository})
     : _repository = repository,
@@ -191,29 +188,26 @@ class ChatListNotifier extends StateNotifier<ChatListState> {
   }
 
   /// Принудительно обновить список чатов.
-  Future<void> refresh({List<Agent>? agents}) async {
+  ///
+  /// [agents] — обязателен: без него нечего грузить. Раньше здесь был
+  /// кэш `_cachedAgents`, но он создавал второй источник правды
+  /// (агенты живут в `agentsProvider`). Теперь вызывающий обязан
+  /// передать актуальный список.
+  Future<void> refresh({required List<Agent> agents}) async {
     AppLogger.debug('Принудительное обновление списка чатов...');
 
-    final agentsToUse = agents ?? _cachedAgents;
-
-    if (agentsToUse == null || agentsToUse.isEmpty) {
+    if (agents.isEmpty) {
       AppLogger.warning('Нет агентов для загрузки чатов');
       return;
     }
 
-    await loadAllChats(agentsToUse);
-  }
-
-  /// Обновить кэш агентов.
-  void updateAgents(List<Agent> agents) {
-    _cachedAgents = agents;
+    await loadAllChats(agents);
   }
 
   /// Очистить список чатов.
   void clear() {
     AppLogger.debug('Очистка списка чатов');
     _setChats([]);
-    _cachedAgents = null;
   }
 
   /// Получить количество чатов.

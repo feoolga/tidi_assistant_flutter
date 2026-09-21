@@ -117,9 +117,9 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
     AppLogger.debug('📂 ChatHistoryDrawer._loadChats вызван');
     final agentsState = ref.read(agentsProvider);
     if (agentsState is AsyncData<List<Agent>>) {
-      final notifier = ref.read(chatListNotifierProvider.notifier);
-      notifier.updateAgents(agentsState.value);
-      notifier.loadAllChats(agentsState.value);
+      ref
+          .read(chatListNotifierProvider.notifier)
+          .loadAllChats(agentsState.value);
     } else {
       AppLogger.debug('📂 agentsProvider ещё не готов: $agentsState');
     }
@@ -128,8 +128,9 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
   Future<void> _refreshChats() async {
     final agentsState = ref.read(agentsProvider);
     if (agentsState is AsyncData<List<Agent>>) {
-      final notifier = ref.read(chatListNotifierProvider.notifier);
-      await notifier.refresh(agents: agentsState.value);
+      await ref
+          .read(chatListNotifierProvider.notifier)
+          .refresh(agents: agentsState.value);
     }
   }
 
