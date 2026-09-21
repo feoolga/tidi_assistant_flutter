@@ -97,37 +97,48 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final chatState = ref.watch(chatProvider);
     final messages = chatState.messages;
     final isLoading = chatState.isLoading;
-    final error = chatState.error;
-    final infoMessage = chatState.infoMessage;
 
     // Сессия — из SSOT (`sessionProvider`), не из `chatState`.
     // `select` — чтобы `ChatScreen` перестраивался только при смене
     // `agentId`, а не при каждом изменении сессии.
     final currentAgentId = ref.watch(sessionProvider.select((s) => s.agentId));
 
-    // Показ SnackBar'ов по состоянию — на следующем кадре.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (error != null && error.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ $error'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-        ref.read(chatProvider.notifier).clearError();
-      }
+    // Показ ошибки — как side effect, через `ref.listen`.
+    //
+    // `select` — подписываемся ТОЛЬКО на поле `error`, а не на весь
+    // `ChatState`. Callback сработает один раз на изменение, а не на
+    // каждый build. Side effects в `build` (через `addPostFrameCallback`)
+    // — антипаттерн: `build` вызывается часто, callback'и копятся.
+    ref.listen<String?>(chatProvider.select((s) => s.error), (previous, next) {
+      if (next == null || next.isEmpty) return;
 
-      if (infoMessage != null && infoMessage.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('ℹ️ $infoMessage'),
-            backgroundColor: AppTheme.primary,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-        ref.read(chatProvider.notifier).clearInfoMessage();
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ $next'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      // Очищаем ошибку после показа — чтобы `SnackBar` не показался
+      // повторно при следующем изменении state.
+      ref.read(chatProvider.notifier).clearError();
+    });
+
+    // Показ информационного сообщения — тоже через `ref.listen`.
+    ref.listen<String?>(chatProvider.select((s) => s.infoMessage), (
+      previous,
+      next,
+    ) {
+      if (next == null || next.isEmpty) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('ℹ️ $next'),
+          backgroundColor: AppTheme.primary,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      ref.read(chatProvider.notifier).clearInfoMessage();
     });
 
     return Scaffold(
