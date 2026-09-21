@@ -8,6 +8,7 @@ import '../providers/chat_list_provider.dart';
 import '../domain/models/agent.dart';
 import '../providers/agent_provider.dart';
 import '../theme/app_theme.dart';
+import '../core/utils/date_format.dart';
 
 // 👇 МЕНЯЕМ НА ConsumerStatefulWidget
 class ChatHistoryDrawer extends ConsumerStatefulWidget {
@@ -262,26 +263,11 @@ class _ChatItem extends ConsumerWidget {
         style: TextStyle(fontSize: 12, color: Colors.grey[600]),
       ),
       trailing: Text(
-        _formatTime(chat.updatedAt),
+        formatRelative(chat.updatedAt),
         style: TextStyle(fontSize: 11, color: Colors.grey[500]),
       ),
       onTap: onTap,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
     );
-  }
-
-  String _formatTime(DateTime date) {
-    final now = DateTime.now();
-    final diff = now.difference(date);
-
-    if (diff.inDays > 0) {
-      return '${diff.inDays}д';
-    } else if (diff.inHours > 0) {
-      return '${diff.inHours}ч';
-    } else if (diff.inMinutes > 0) {
-      return '${diff.inMinutes}м';
-    } else {
-      return 'только что';
-    }
   }
 }

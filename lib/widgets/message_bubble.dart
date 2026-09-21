@@ -5,6 +5,7 @@ import '../domain/models/message.dart';
 import '../theme/app_theme.dart';
 import 'attachment_preview.dart';
 import 'typing_indicator.dart';
+import '../core/utils/date_format.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -102,7 +103,7 @@ class MessageBubble extends StatelessWidget {
                 // Время.
                 if (!showTypingIndicator)
                   Text(
-                    _formatTime(message.timestamp),
+                    formatTime(message.timestamp),
                     style: TextStyle(
                       color: isFromUser
                           ? AppTheme.textSecondary.withValues(alpha: 0.7)
@@ -116,10 +117,6 @@ class MessageBubble extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  String _formatTime(DateTime time) {
-    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
   /// Превью вложений внутри сообщения — компактный вид, без кнопки удаления.

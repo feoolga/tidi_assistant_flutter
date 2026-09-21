@@ -1,5 +1,7 @@
 // lib/domain/models/chat_session.dart
 
+import '../../core/utils/date_format.dart';
+
 /// Модель сессии чата — соответствует ответу GET /agents/{agent_id}/sessions
 class ChatSession {
   /// ID сессии (число от бэкенда, храним как String)
@@ -29,13 +31,8 @@ class ChatSession {
   String get displayTitle {
     final t = title;
     if (t != null && t.isNotEmpty) {
-      return t; // здесь t — String (не String?)
+      return t;
     }
-    return 'Чат от ${_formatDate(createdAt)}';
-  }
-
-  /// Форматирование даты для отображения
-  static String _formatDate(DateTime date) {
-    return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
+    return 'Чат от ${formatShortDate(createdAt)}';
   }
 }
