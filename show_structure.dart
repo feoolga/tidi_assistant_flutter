@@ -73,7 +73,12 @@ void _printRootFiles(String path) {
   final dir = Directory(path);
   final items = dir.listSync();
 
-  final importantFiles = ['pubspec.yaml', 'README.md', 'analysis_options.yaml'];
+  final importantFiles = [
+    'pubspec.yaml',
+    'README.md',
+    'analysis_options.yaml',
+    'BACKLOG.md',
+  ];
 
   for (var item in items) {
     if (item is File) {

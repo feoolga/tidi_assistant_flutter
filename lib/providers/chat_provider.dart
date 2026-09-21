@@ -8,6 +8,7 @@ import '../core/config/app_config.dart';
 import '../core/errors/error_handler.dart';
 import '../core/errors/file_exceptions.dart';
 import '../core/logger/app_logger.dart';
+import '../core/utils/copy_with_marker.dart';
 import '../data/repositories/chat_repository.dart';
 import '../domain/models/attachment.dart';
 import '../domain/models/message.dart';
@@ -71,25 +72,22 @@ class ChatState {
     return const ChatState();
   }
 
-  /// Специальный объект-маркер: «это поле не было передано в copyWith».
-  static const _unset = Object();
-
   ChatState copyWith({
     List<Message>? messages,
     bool? isLoading,
-    Object? error = _unset,
+    Object? error = copyWithUnset,
     bool? isStreaming,
     List<Attachment>? pendingAttachments,
-    Object? infoMessage = _unset,
+    Object? infoMessage = copyWithUnset,
     bool? isAddingAttachment,
   }) {
     return ChatState(
       messages: messages ?? this.messages,
       isLoading: isLoading ?? this.isLoading,
-      error: identical(error, _unset) ? this.error : error as String?,
+      error: isCopyWithUnset(error) ? this.error : error as String?,
       isStreaming: isStreaming ?? this.isStreaming,
       pendingAttachments: pendingAttachments ?? this.pendingAttachments,
-      infoMessage: identical(infoMessage, _unset)
+      infoMessage: isCopyWithUnset(infoMessage)
           ? this.infoMessage
           : infoMessage as String?,
       isAddingAttachment: isAddingAttachment ?? this.isAddingAttachment,

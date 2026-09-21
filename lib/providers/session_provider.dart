@@ -3,6 +3,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/logger/app_logger.dart';
+import '../core/utils/copy_with_marker.dart';
 
 /// Состояние текущей сессии чата.
 ///
@@ -39,15 +40,6 @@ class ChatSessionState {
   // copyWith с маркером _unset
   // ------------------------------------------------------------
 
-  /// Специальный объект-маркер: «это поле не было передано в copyWith».
-  ///
-  /// Нужен, чтобы отличать `copyWith()` (не трогать поле)
-  /// от `copyWith(field: null)` (явно сбросить поле в null).
-  ///
-  /// Без этого маркера `copyWith(agentId: null)` **не смог бы** сбросить
-  /// `agentId` — `null ?? this.agentId` вернул бы старое значение.
-  static const _unset = Object();
-
   /// Создать копию с изменёнными полями.
   ///
   /// Примеры:
@@ -56,12 +48,12 @@ class ChatSessionState {
   /// - `copyWith(agentId: null)` — **сбросить** `agentId` в `null`.
   /// - `copyWith(sessionId: 'abc')` — обновить только `sessionId`.
   ChatSessionState copyWith({
-    Object? agentId = _unset,
-    Object? sessionId = _unset,
+    Object? agentId = copyWithUnset,
+    Object? sessionId = copyWithUnset,
   }) {
     return ChatSessionState(
-      agentId: identical(agentId, _unset) ? this.agentId : agentId as String?,
-      sessionId: identical(sessionId, _unset)
+      agentId: isCopyWithUnset(agentId) ? this.agentId : agentId as String?,
+      sessionId: isCopyWithUnset(sessionId)
           ? this.sessionId
           : sessionId as String?,
     );

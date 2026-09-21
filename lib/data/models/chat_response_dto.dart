@@ -1,5 +1,7 @@
 // lib/data/models/chat_response_dto.dart
 
+import '../../core/utils/copy_with_marker.dart';
+
 /// DTO (Data Transfer Object) для ответа от сервера в формате Responses API.
 ///
 /// Собирается из SSE-событий:
@@ -14,29 +16,21 @@ class ChatResponseDto {
   // 1. ПОЛЯ
   // ============================================================
 
-  /// ID ответа (например, "resp_1e6b7ee7-..." или "chatcmpl-...")
+  /// ID ответа (например, "resp_1e6b7ee7-...").
   final String id;
 
-  /// Модель/агент, который ответил (например, "epoz" или "auto")
+  /// Модель/агент, который ответил (например, "epoz" или "auto").
   final String model;
 
-  /// ID чата (conversation_id), если был передан в запросе
+  /// ID чата (conversation_id), если был передан в запросе.
   final String? conversationId;
 
-  /// Полный текст ответа (собранный из всех токенов)
+  /// Полный текст ответа (собранный из всех токенов).
   final String content;
 
-  /// true — ответ еще не завершен (идет стриминг)
-  /// false — ответ завершен
+  /// true — ответ еще не завершен (идет стриминг).
+  /// false — ответ завершен.
   final bool isStreaming;
-
-  // ============================================================
-  // МАРКЕР ДЛЯ copyWith
-  // ============================================================
-
-  /// Специальный объект-маркер.
-  /// Означает: "это поле не было передано в copyWith".
-  static const _unset = Object();
 
   // ============================================================
   // 2. КОНСТРУКТОРЫ
@@ -66,14 +60,14 @@ class ChatResponseDto {
   ChatResponseDto copyWith({
     String? id,
     String? model,
-    Object? conversationId = _unset,
+    Object? conversationId = copyWithUnset,
     String? content,
     bool? isStreaming,
   }) {
     return ChatResponseDto(
       id: id ?? this.id,
       model: model ?? this.model,
-      conversationId: identical(conversationId, _unset)
+      conversationId: isCopyWithUnset(conversationId)
           ? this.conversationId
           : conversationId as String?,
       content: content ?? this.content,
@@ -87,6 +81,7 @@ class ChatResponseDto {
 
   @override
   String toString() {
-    return 'ChatResponseDto(id: $id, model: $model, conversationId: $conversationId, contentLength: ${content.length})';
+    return 'ChatResponseDto(id: $id, model: $model, '
+        'conversationId: $conversationId, contentLength: ${content.length})';
   }
 }
