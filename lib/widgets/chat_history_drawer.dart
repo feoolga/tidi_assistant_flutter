@@ -229,7 +229,10 @@ class _ChatItem extends ConsumerWidget {
         style: TextStyle(fontSize: 12, color: Colors.grey[600]),
       ),
       trailing: Text(
-        formatRelative(chat.updatedAt),
+        // Если дата обновления неизвестна — показываем прочерк.
+        // Не подставляем `DateTime.now()`: это выглядело бы как
+        // «только что», хотя на самом деле мы не знаем дату.
+        chat.updatedAt != null ? formatRelative(chat.updatedAt!) : '—',
         style: TextStyle(fontSize: 11, color: Colors.grey[500]),
       ),
       onTap: onTap,

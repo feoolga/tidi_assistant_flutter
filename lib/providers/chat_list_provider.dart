@@ -61,7 +61,22 @@ final chatsProvider = FutureProvider<List<ChatSession>>((ref) async {
   }
 
   // 3. Сортируем по дате обновления (новые сверху).
-  allChats.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  //
+  // Чаты с `null` `updatedAt` уходят **в конец** списка:
+  // у них дата неизвестна, поэтому мы не можем судить,
+  // «свежие» они или «старые». Ставить их наверх (как было бы
+  // с `DateTime.now()` в fallback) — неправильно: старый чат
+  // выглядел бы как только что созданный.
+  //
+  // Используем `DateTime(0)` (эпоха) как «самая старая дата» —
+  // тогда `null`-чаты естественно оказываются в конце.
+  // Компаратор: сначала сравниваем по `updatedAt`, но `null`
+  // превращаем в «эпоху».
+  allChats.sort((a, b) {
+    final aDate = a.updatedAt ?? DateTime(0);
+    final bDate = b.updatedAt ?? DateTime(0);
+    return bDate.compareTo(aDate);
+  });
 
   AppLogger.info('Загружено чатов: ${allChats.length}');
   return allChats;
