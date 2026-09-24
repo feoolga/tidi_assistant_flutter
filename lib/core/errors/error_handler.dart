@@ -60,7 +60,7 @@ class ErrorHandler {
   /// }
   /// ```
   static AppException handle(
-    dynamic error, [
+    Object error, [
     StackTrace? stackTrace,
     String? context,
     Map<String, dynamic>? contextData,
@@ -99,7 +99,7 @@ class ErrorHandler {
   ///
   /// **Логирует так же, как [handle].**
   static AppException handleFileUpload(
-    dynamic error, [
+    Object error, [
     StackTrace? stackTrace,
     String? context,
     Map<String, dynamic>? contextData,
@@ -150,7 +150,7 @@ class ErrorHandler {
   /// Преобразовать любое исключение в [AppException] для общего контекста.
   ///
   /// **Не логирует** — логирование делает [handle].
-  static AppException _convert(dynamic error) {
+  static AppException _convert(Object error) {
     if (error is AppException) return error;
     if (error is http.ClientException) {
       return NetworkException.connectionError(error);
@@ -168,7 +168,7 @@ class ErrorHandler {
   /// загрузки файла.
   ///
   /// **Не логирует** — логирование делает [handleFileUpload].
-  static AppException _convertFileUpload(dynamic error) {
+  static AppException _convertFileUpload(Object error) {
     // FileException — уже готовый, пропускаем.
     if (error is FileException) return error;
 
@@ -227,7 +227,7 @@ class ErrorHandler {
 
   /// Обработать и выбросить [AppException].
   static void throwAppException(
-    dynamic error, [
+    Object error, [
     StackTrace? stackTrace,
     String? context,
     Map<String, dynamic>? contextData,
@@ -237,7 +237,7 @@ class ErrorHandler {
 
   /// Обработать и выбросить [AppException] в контексте загрузки файла.
   static void throwFileUploadException(
-    dynamic error, [
+    Object error, [
     StackTrace? stackTrace,
     String? context,
     Map<String, dynamic>? contextData,
@@ -250,7 +250,7 @@ class ErrorHandler {
   // ============================================================
 
   /// Получить сообщение для пользователя из ошибки.
-  static String getUserMessage(dynamic error) {
+  static String getUserMessage(Object error) {
     if (error is AppException) {
       return error.userMessage;
     }
@@ -258,7 +258,7 @@ class ErrorHandler {
   }
 
   /// Получить код ошибки для логирования/аналитики.
-  static String getErrorCode(dynamic error) {
+  static String getErrorCode(Object error) {
     if (error is AppException) {
       return error.code;
     }
