@@ -121,6 +121,32 @@ class ErrorHandler {
   // 3. ПРЕОБРАЗОВАНИЕ (БЕЗ ЛОГИРОВАНИЯ)
   // ============================================================
 
+  /// Преобразовать любое исключение в [AppException] — **без логирования**.
+  ///
+  /// **Зачем публичный метод:**
+  /// В большинстве случаев используется [handle] — он конвертирует **и**
+  /// логирует. Но есть ситуации, когда логирование уже произошло **выше**
+  /// по стеку (например, `SendMessageUseCase` залогировал `event: error`
+  /// через `AppLogger.logException`), а конвертация — нужна. Второй лог
+  /// был бы дублем.
+  ///
+  /// **Правило:** если ошибка уже `AppException` и уже залогирована —
+  /// используйте [convert]. Если это сырое исключение, которое надо
+  /// и превратить, и залогировать — [handle].
+  static AppException convert(Object error) {
+    if (error is AppException) return error;
+    if (error is http.ClientException) {
+      return NetworkException.connectionError(error);
+    }
+    if (error is TimeoutException) {
+      return NetworkException.timeout(error);
+    }
+    if (error is FormatException) {
+      return ServerException.parseError(error);
+    }
+    return UnknownException.from(error);
+  }
+
   /// Преобразовать любое исключение в [AppException] для общего контекста.
   ///
   /// **Не логирует** — логирование делает [handle].

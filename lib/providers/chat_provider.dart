@@ -557,7 +557,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
             break;
 
           case ChatStreamFailed(:final error):
-            AppLogger.logException('Ошибка в стриме', error);
+            // Логирование **уже произошло** в `SendMessageUseCase`
+            // (для `event: error`) или в `ErrorHandler.handle` внутри
+            // `ChatStreamHandler` (для транспортных ошибок — но мы это
+            // убрали, см. правку 2). Здесь — только UI-реакция.
+            //
+            // **Почему не логируем:** правило `ErrorHandler` —
+            // «единая точка логирования». Здесь мы не обрабатываем
+            // ошибку заново, а только показываем `userMessage`.
             _removeEmptyAiMessageIfAny();
             _setError(error.userMessage);
             // pendingAttachments НЕ очищаем — пользователь может

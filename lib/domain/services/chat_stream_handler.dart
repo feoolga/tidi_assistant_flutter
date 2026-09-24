@@ -66,11 +66,18 @@ class ChatStreamHandler {
         }
       },
       onError: (Object error, StackTrace stackTrace) {
-        final appException = ErrorHandler.handle(
-          error,
-          stackTrace, // ← передаём — handle сам залогирует
-          'Ошибка в SSE-стриме',
-        );
+        // `convert`, не `handle` — ошибка **уже залогирована** в
+        // `SendMessageUseCase` (там `AppLogger.logException` на
+        // `event: error`). Второй лог через `handle` был бы дублем.
+        //
+        // Если ошибка пришла из парсера (`SseParser`), а не из use-case,
+        // она ещё **не** `AppException` — `convert` приведёт её к нужному
+        // типу. Логирования в этом случае не будет — но такие ошибки
+        // редки и попали бы в лог из `ChatNotifier`, если бы мы там
+        // логировали. Мы **не** логируем в `ChatNotifier` — значит,
+        // такие ошибки «выживут» только как технические детали в UI.
+        // Если это станет проблемой — вернём логирование сюда.
+        final appException = ErrorHandler.convert(error);
 
         if (!isClosed) {
           isClosed = true;
