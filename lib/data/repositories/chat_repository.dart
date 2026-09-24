@@ -268,6 +268,140 @@ class ChatRepository {
     }
   }
 
+  /// Переименовать чат.
+  ///
+  /// `PATCH /agents/{agentId}/v1/platform/conversations/{conversationId}`.
+  ///
+  /// **Тело:** `{ "title": "<новое название>" }` — собирается в `ChatApi`.
+  /// **Успех:** `200` с обновлённым объектом чата.
+  ///
+  /// **Почему `Future<void>`, а не `Future<ChatSession>`:**
+  /// UI после успеха вызывает `ref.invalidate(chatsProvider)` —
+  /// список перезагружается целиком. Возвращать обновлённый объект
+  /// **незачем**: он всё равно будет перезаписан при перезагрузке.
+  ///
+  /// **Особый случай `404`:** чат удалён или чужой. Превращаем
+  /// в [BusinessException.chatNotFound] — это **доменное** событие,
+  /// не транспорт. UI покажет «Чат не найден».
+  ///
+  /// **Остальные ошибки:** через [ErrorHandler.handle] — с контекстом
+  /// («Не удалось переименовать чат ...») и `agentId`/`conversationId`.
+  Future<void> renameConversation({
+    required String agentId,
+    required String conversationId,
+    required String title,
+  }) async {
+    try {
+      final response = await _api.renameConversation(
+        agentId: agentId,
+        conversationId: conversationId,
+        title: title,
+      );
+
+      // Успех по контракту — **только** `200`.
+      // Клиент не бросает на `200` (он `< 400`), но проверяем явно:
+      // если сервер вернёт `201`/`204` с непонятным телом — мы хотим
+      // это заметить, а не молча проглотить.
+      if (response.statusCode != 200) {
+        AppLogger.error(
+          'Неожиданный статус при переименовании чата: '
+          '${response.statusCode} (ожидался 200)',
+        );
+        throw ServerException.clientError(
+          statusCode: response.statusCode,
+          body: response.body.isNotEmpty
+              ? jsonDecode(response.body) as Map<String, dynamic>
+              : null,
+        );
+      }
+
+      AppLogger.info('Чат переименован: $conversationId → "$title"');
+    } on ServerException catch (e, stackTrace) {
+      // 404 — чат удалён или чужой. Это **доменное** событие, не транспорт.
+      if (e.statusCode == 404) {
+        AppLogger.info(
+          'Чат $conversationId не найден при переименовании (404)',
+        );
+        throw BusinessException.chatNotFound(conversationId);
+      }
+
+      throw ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Не удалось переименовать чат $conversationId',
+        {'agentId': agentId, 'conversationId': conversationId},
+      );
+    } catch (e, stackTrace) {
+      throw ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Не удалось переименовать чат $conversationId',
+        {'agentId': agentId, 'conversationId': conversationId},
+      );
+    }
+  }
+
+  /// Удалить чат со всей его историей.
+  ///
+  /// `DELETE /agents/{agentId}/v1/platform/conversations/{conversationId}`.
+  ///
+  /// **Успех:** `204 No Content` — тело пустое.
+  ///
+  /// **Почему `Future<void>`, а не что-то другое:**
+  /// `204` не содержит тела. Возвращать нечего.
+  ///
+  /// **Особый случай `404`:** чат уже удалён или чужой. Превращаем
+  /// в [BusinessException.chatNotFound].
+  ///
+  /// **Остальные ошибки:** через [ErrorHandler.handle].
+  Future<void> deleteConversation({
+    required String agentId,
+    required String conversationId,
+  }) async {
+    try {
+      final response = await _api.deleteConversation(
+        agentId: agentId,
+        conversationId: conversationId,
+      );
+
+      // Успех по контракту — **только** `204 No Content`.
+      if (response.statusCode != 204) {
+        AppLogger.error(
+          'Неожиданный статус при удалении чата: '
+          '${response.statusCode} (ожидался 204)',
+        );
+        throw ServerException.clientError(
+          statusCode: response.statusCode,
+          body: response.body.isNotEmpty
+              ? jsonDecode(response.body) as Map<String, dynamic>
+              : null,
+        );
+      }
+
+      AppLogger.info('Чат удалён: $conversationId');
+    } on ServerException catch (e, stackTrace) {
+      // 404 — чат уже удалён или чужой.
+      if (e.statusCode == 404) {
+        AppLogger.info('Чат $conversationId не найден при удалении (404)');
+        throw BusinessException.chatNotFound(conversationId);
+      }
+
+      throw ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Не удалось удалить чат $conversationId',
+        {'agentId': agentId, 'conversationId': conversationId},
+      );
+    } catch (e, stackTrace) {
+      throw ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Не удалось удалить чат $conversationId',
+        {'agentId': agentId, 'conversationId': conversationId},
+      );
+    }
+  }
+
   // ============================================================
   // 5. РАБОТА С СООБЩЕНИЯМИ
   // ============================================================

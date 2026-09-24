@@ -65,6 +65,50 @@ class ChatApi {
     );
   }
 
+  /// PATCH /agents/{agentId}/v1/platform/conversations/{conversationId}
+  ///
+  /// Переименовать чат.
+  ///
+  /// **Тело:** `{ "title": "<новое название>" }`.
+  /// **Успех:** `200` с обновлённым объектом чата
+  /// (`id`, `title`, `created_at`, `updated_at`).
+  /// **Ошибки:** `404`, если чат не найден или чужой; `400`,
+  /// если `title` невалидный (например, пустая строка — на стороне
+  /// бэкенда это может быть отдельное правило).
+  ///
+  /// **Разбор ответа и статусов — задача `ChatRepository`,
+  /// не этого метода.**
+  Future<http.Response> renameConversation({
+    required String agentId,
+    required String conversationId,
+    required String title,
+  }) async {
+    return await _httpClient.patch(
+      '/agents/$agentId/v1/platform/conversations/$conversationId',
+      body: {'title': title},
+    );
+  }
+
+  /// DELETE /agents/{agentId}/v1/platform/conversations/{conversationId}
+  ///
+  /// Удалить чат со всей его историей.
+  ///
+  /// Каскадно удаляются сообщения чата и их фидбэк
+  /// (см. README `document_chat`, раздел «Чаты»).
+  ///
+  /// **Успех:** `204 No Content` — тело пустое.
+  /// **Ошибки:** `404`, если чат не найден или чужой.
+  ///
+  /// **Разбор ответа и статусов — задача `ChatRepository`.**
+  Future<http.Response> deleteConversation({
+    required String agentId,
+    required String conversationId,
+  }) async {
+    return await _httpClient.delete(
+      '/agents/$agentId/v1/platform/conversations/$conversationId',
+    );
+  }
+
   // ============================================================
   // 3. ОТПРАВКА СООБЩЕНИЙ (RESPONSES API)
   // ============================================================
