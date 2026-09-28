@@ -189,14 +189,14 @@ class Attachment {
 /// Публичная функция (не метод класса), потому что используется:
 /// - в `AttachmentMapper` — при переводе ответа сервера в домен;
 /// - в `ChatNotifier.addAttachment` — при валидации локального файла
-///   до загрузки (по `AppConfig.allowedMimeTypes`).
+///   до загрузки (по `AppConfig.documentChatAllowedMimeTypes`).
 ///
 /// Смотрим только на расширение: файл либо уже на сервере (маппер),
 /// либо только что выбран пользователем (валидация). Оба раза расширение
 /// — единственный доступный источник информации о типе.
 ///
 /// Если расширение неизвестно — возвращаем `application/octet-stream`.
-/// Валидация по `AppConfig.allowedMimeTypes` отсеет такие файлы
+/// Валидация по `AppConfig.documentChatAllowedMimeTypes` отсеет такие файлы
 /// до загрузки, так что до сервера они не дойдут.
 String attachmentMimeTypeFromFilename(String filename) {
   final lower = filename.toLowerCase();

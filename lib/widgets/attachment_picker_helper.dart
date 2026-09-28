@@ -9,7 +9,7 @@ import '../core/logger/app_logger.dart';
 /// Хелпер для выбора файлов через системный диалог.
 ///
 /// Обёртка над `file_picker` — знает, какие форматы разрешены
-/// (см. `AppConfig.allowedFileExtensions`), как открыть диалог,
+/// (см. `AppConfig.documentChatAllowedFileExtensions`), как открыть диалог,
 /// и как обработать результат.
 ///
 /// Отдельный класс, а не функция внутри виджета, — чтобы UI не знал
@@ -35,7 +35,7 @@ class AttachmentPickerHelper {
         // не поддерживает фильтр — пользователь всё равно увидит
         // все файлы, а валидация MIME/размера произойдёт в addAttachment.
         type: FileType.custom,
-        allowedExtensions: AppConfig.allowedFileExtensions,
+        allowedExtensions: AppConfig.documentChatAllowedFileExtensions,
 
         // Не даём выбирать папки — только файлы.
         // (file_picker всё равно вернёт только файлы, но так явнее.)

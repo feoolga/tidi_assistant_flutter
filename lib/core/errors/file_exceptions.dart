@@ -37,7 +37,7 @@ class FileException extends AppException {
   /// Это понятнее абстрактного «слишком большой».
   ///
   /// Использование: когда мы **сами** прочитали размер файла
-  /// (`await file.length()`) и сравнили с `AppConfig.maxFileSizeBytes`.
+  /// (`await file.length()`) и сравнили с `AppConfig.documentChatMaxFileSizeBytes`.
   factory FileException.tooLarge({
     required int sizeBytes,
     required int maxBytes,
@@ -58,7 +58,7 @@ class FileException extends AppException {
   /// Используется, когда сервер вернул `413 Payload Too Large`
   /// в ответ на `POST /v1/files`. В этом случае мы **не знаем**
   /// точный размер файла (его считает сервер) и **не знаем**
-  /// точный лимит (он может отличаться от `AppConfig.maxFileSizeBytes`).
+  /// точный лимит (он может отличаться от `AppConfig.documentChatMaxFileSizeBytes`).
   ///
   /// Поэтому сообщение — **общее**, без конкретных цифр. Если сервер
   /// прислал текстовое пояснение (`serverMessage`), оно уйдёт
@@ -83,7 +83,7 @@ class FileException extends AppException {
   /// Формат файла не поддерживается.
   ///
   /// Срабатывает, если `file_picker` вернул файл с расширением или MIME,
-  /// которого нет в `AppConfig.allowedFileExtensions` / `allowedMimeTypes`.
+  /// которого нет в `AppConfig.documentChatAllowedFileExtensions` / `allowedMimeTypes`.
   factory FileException.unsupportedFormat({required String mimeType}) {
     return FileException(
       code: 'FILE_UNSUPPORTED_FORMAT',
@@ -94,7 +94,7 @@ class FileException extends AppException {
 
   /// Слишком много файлов в одном сообщении.
   ///
-  /// Лимит берётся из `AppConfig.maxAttachedFiles`,
+  /// Лимит берётся из `AppConfig.documentChatMaxAttachedFiles`,
   /// который должен совпадать с настройкой бэкенда (`MAX_ATTACHED_FILES`).
   factory FileException.tooManyFiles({required int actual, required int max}) {
     return FileException(

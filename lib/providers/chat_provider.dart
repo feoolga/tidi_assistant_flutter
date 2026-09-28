@@ -306,10 +306,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       // 1. Валидация количества.
       final currentCount = state.pendingAttachments.length;
-      if (currentCount >= AppConfig.maxAttachedFiles) {
+      if (currentCount >= AppConfig.documentChatMaxAttachedFiles) {
         throw FileException.tooManyFiles(
           actual: currentCount + 1,
-          max: AppConfig.maxAttachedFiles,
+          max: AppConfig.documentChatMaxAttachedFiles,
         );
       }
 
@@ -317,15 +317,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final fileName = file.uri.pathSegments.last;
       final sizeBytes = await file.length();
 
-      if (sizeBytes > AppConfig.maxFileSizeBytes) {
+      if (sizeBytes > AppConfig.documentChatMaxFileSizeBytes) {
         throw FileException.tooLarge(
           sizeBytes: sizeBytes,
-          maxBytes: AppConfig.maxFileSizeBytes,
+          maxBytes: AppConfig.documentChatMaxFileSizeBytes,
         );
       }
 
       final mimeType = attachmentMimeTypeFromFilename(fileName);
-      if (!AppConfig.allowedMimeTypes.contains(mimeType)) {
+      if (!AppConfig.documentChatAllowedMimeTypes.contains(mimeType)) {
         throw FileException.unsupportedFormat(mimeType: mimeType);
       }
 
