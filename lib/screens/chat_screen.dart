@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/logger/app_logger.dart';
+import '../providers/attachment_draft_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
@@ -11,6 +12,19 @@ import '../widgets/chat_history_drawer.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 
+/// Главный экран чата.
+///
+/// **Источники данных:**
+/// - `chatProvider` — история сообщений, статус отправки, ошибки чата;
+/// - `attachmentDraftProvider` — ошибки и подсказки, связанные
+///   с прикреплением файлов;
+/// - `sessionProvider` — активная сессия (SSOT).
+///
+/// **Зачем два разных «error».**
+/// Ошибки **чата** (отправка сообщения, стриминг) — в `ChatState.error`.
+/// Ошибки **вложений** (загрузка файла) — в `AttachmentDraftState.error`.
+/// Это **разные сущности**, и UI показывает их **разными** сообщениями:
+/// пользователь должен понимать, **что** именно сломалось.
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
 
@@ -53,6 +67,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   /// Получить имя агента для отображения в AppBar.
+  ///
+  /// **TODO (этап C):** заменить на `agentDisplayName` из `sessionProvider`.
+  /// Сейчас здесь хардкод-словарь — временное решение. При добавлении
+  /// нового агента (например, `agentic_rag`) словарь надо править.
   String _getAgentName(String? agentId) {
     if (agentId == null) return 'AI Ассистент';
 
@@ -103,12 +121,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // `agentId`, а не при каждом изменении сессии.
     final currentAgentId = ref.watch(sessionProvider.select((s) => s.agentId));
 
-    // Показ ошибки — как side effect, через `ref.listen`.
+    // ============================================================
+    // SIDE EFFECTS — показ SnackBar'ов через ref.listen
+    // ============================================================
     //
-    // `select` — подписываемся ТОЛЬКО на поле `error`, а не на весь
-    // `ChatState`. Callback сработает один раз на изменение, а не на
-    // каждый build. Side effects в `build` (через `addPostFrameCallback`)
-    // — антипаттерн: `build` вызывается часто, callback'и копятся.
+    // `ref.listen` + `select` — подписываемся ТОЛЬКО на нужное поле,
+    // а не на весь state. Callback срабатывает один раз на изменение,
+    // а не на каждый build. Side effects в `build` (через
+    // `addPostFrameCallback`) — антипаттерн: `build` вызывается часто,
+    // callback'и копятся.
+
+    // --- 1. Ошибки чата (отправка, загрузка, стриминг) ---
     ref.listen<String?>(chatProvider.select((s) => s.error), (previous, next) {
       if (next == null || next.isEmpty) return;
 
@@ -124,8 +147,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ref.read(chatProvider.notifier).clearError();
     });
 
-    // Показ информационного сообщения — тоже через `ref.listen`.
-    ref.listen<String?>(chatProvider.select((s) => s.infoMessage), (
+    // --- 2. Ошибки загрузки вложений ---
+    //
+    // Отдельный listener, потому что `AttachmentDraftState.error` —
+    // **другой** error, нежели `ChatState.error`. Раньше они жили
+    // в одном месте (`ChatState.error`), и один listener показывал
+    // всё подряд. После разделения — два listener'а, два разных
+    // сообщения.
+    ref.listen<String?>(attachmentDraftProvider.select((s) => s.error), (
+      previous,
+      next,
+    ) {
+      if (next == null || next.isEmpty) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ $next'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      // Очищаем — иначе при следующем изменении state `SnackBar`
+      // покажется снова.
+      ref.read(attachmentDraftProvider.notifier).clearError();
+    });
+
+    // --- 3. Информационные сообщения вложений ---
+    //
+    // Пример: «Файл уже прикреплён». Раньше жил в `ChatState.infoMessage`,
+    // теперь — в `AttachmentDraftState.infoMessage`.
+    ref.listen<String?>(attachmentDraftProvider.select((s) => s.infoMessage), (
       previous,
       next,
     ) {
@@ -138,7 +189,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           duration: const Duration(seconds: 3),
         ),
       );
-      ref.read(chatProvider.notifier).clearInfoMessage();
+      ref.read(attachmentDraftProvider.notifier).clearInfoMessage();
     });
 
     return Scaffold(

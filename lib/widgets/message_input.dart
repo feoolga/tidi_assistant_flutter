@@ -4,25 +4,40 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/errors/file_exceptions.dart';
 import '../core/logger/app_logger.dart';
-import '../providers/chat_provider.dart';
+import '../providers/attachment_draft_provider.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 import 'attachment_picker_helper.dart';
 import 'attachment_preview.dart';
-import '../domain/models/attachment.dart';
 
 /// Поле ввода сообщения с кнопками «прикрепить», «микрофон», «отправить»
 /// и списком превью прикреплённых файлов над полем ввода.
 ///
-/// Наследуется от `ConsumerStatefulWidget`, потому что:
-/// - читает `pendingAttachments` и `isAddingAttachment` из `chatProvider`
-///   (для отображения превью и блокировки кнопки «прикрепить»);
-/// - читает `sessionProvider` (чтобы блокировать прикрепление в чужом чате);
-/// - вызывает `addAttachment` и `removeAttachment` в `chatProvider`.
+/// **Источники данных:**
+/// - **вложения-черновики** — из `attachmentDraftProvider`
+///   (список, статус загрузки, признак «все готовы»);
+/// - **сессия** — из `sessionProvider` (чтобы блокировать прикрепление
+///   в чужом чате);
+/// - **флаг отправки** — приходит снаружи через `widget.isLoading`.
+///
+/// **Чего тут НЕТ:**
+/// - `chatProvider` — этот виджет больше не знает про состояние чата.
+///   Отправка сообщения — забота `ChatScreen` (он вызывает колбэк
+///   `onSend`, а тот — `chatProvider.sendMessage`).
+/// - Логика «все вложения готовы» — она переехала в геттер
+///   `AttachmentDraftState.allAttachmentsReady`.
 class MessageInput extends ConsumerStatefulWidget {
   /// Колбэк отправки — принимает текст. Может быть пустым,
   /// если отправляются только вложения.
   final Function(String) onSend;
+
+  /// Идёт ли **отправка сообщения** (не загрузка файла!).
+  ///
+  /// Приходит из `ChatScreen` — тот читает `chatProvider.isLoading`.
+  /// Пока `true` — блокируем и отправку, и прикрепление.
+  ///
+  /// **Не путать** с `attachmentDraftProvider.isLoading` — тот про
+  /// **загрузку файла** и читается из провайдера напрямую.
   final bool isLoading;
 
   const MessageInput({super.key, required this.onSend, this.isLoading = false});
@@ -64,13 +79,13 @@ class _MessageInputState extends ConsumerState<MessageInput> {
 
   void _sendMessage() {
     final text = _controller.text.trim();
-    final chatState = ref.read(chatProvider);
-    final hasAttachments = chatState.pendingAttachments.isNotEmpty;
+    final draftState = ref.read(attachmentDraftProvider);
+    final hasAttachments = draftState.hasAttachments;
 
     // Не отправляем, если есть незагруженные (или упавшие) вложения —
     // иначе сообщение уйдёт без файла, и пользователь не поймёт, почему
     // AI его «не увидел».
-    if (hasAttachments && !_allAttachmentsReady(chatState)) {
+    if (hasAttachments && !draftState.allAttachmentsReady) {
       // Показываем подсказку — иначе пользователь подумает, что кнопка сломана.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -95,17 +110,19 @@ class _MessageInputState extends ConsumerState<MessageInput> {
   Future<void> _pickAndAttach() async {
     // Пока диалог возвращает один файл (allowMultiple: false).
     // Если включим мультивыбор — здесь нужна очередь, потому что
-    // addAttachment защищён от повторного вызова через isAddingAttachment.
+    // addAttachment защищён от повторного вызова через isLoading
+    // в attachmentDraftProvider.
     try {
       final files = await AttachmentPickerHelper.pickFiles();
       if (files.isEmpty) return; // пользователь отменил
 
       for (final file in files) {
-        await ref.read(chatProvider.notifier).addAttachment(file);
+        await ref.read(attachmentDraftProvider.notifier).addAttachment(file);
       }
     } on FileException catch (e) {
       // Ошибка открытия диалога — показываем локально,
-      // потому что в chatProvider эта ошибка не попадает.
+      // потому что в attachmentDraftProvider эта ошибка не попадает
+      // (это ошибка на этапе выбора файла, до загрузки).
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -131,29 +148,22 @@ class _MessageInputState extends ConsumerState<MessageInput> {
   ///
   /// Блокируем, если:
   /// - идёт отправка сообщения (`widget.isLoading`);
-  /// - идёт загрузка предыдущего вложения (`isAddingAttachment`);
+  /// - идёт загрузка предыдущего вложения (`draftState.isLoading`);
   /// - открыт чужой чат (агент известен и не `document_chat`).
-  bool _canAttach(ChatState chatState, String? currentAgentId) {
+  ///
+  /// **Почему `document_chat` захардкожен:** на текущий момент только
+  /// этот агент принимает файлы. Когда появится `AgentConfig` с флагом
+  /// `canUploadFiles`, проверим флаг вместо сравнения со строкой.
+  bool _canAttach({
+    required bool draftIsLoading,
+    required String? currentAgentId,
+  }) {
     if (widget.isLoading) return false;
-    if (chatState.isAddingAttachment) return false;
+    if (draftIsLoading) return false;
     if (currentAgentId != null && currentAgentId != 'document_chat') {
       return false;
     }
     return true;
-  }
-
-  /// Все ли вложения готовы к отправке?
-  ///
-  /// Возвращает `true`, если:
-  /// - вложений нет вообще;
-  /// - все вложения в статусе [AttachmentStatus.done].
-  ///
-  /// `false`, если хотя бы одно вложение в статусе `pending`/`uploading`/
-  /// `processing`/`failed`.
-  bool _allAttachmentsReady(ChatState chatState) {
-    return chatState.pendingAttachments.every(
-      (a) => a.status == AttachmentStatus.done,
-    );
   }
 
   // ============================================================
@@ -162,11 +172,11 @@ class _MessageInputState extends ConsumerState<MessageInput> {
 
   @override
   Widget build(BuildContext context) {
-    final chatState = ref.watch(chatProvider);
+    final draftState = ref.watch(attachmentDraftProvider);
     final sessionState = ref.watch(sessionProvider);
 
-    final hasAttachments = chatState.pendingAttachments.isNotEmpty;
-    final allAttachmentsReady = _allAttachmentsReady(chatState);
+    final hasAttachments = draftState.hasAttachments;
+    final allAttachmentsReady = draftState.allAttachmentsReady;
 
     // Отправка доступна, если есть текст или вложения,
     // нет активной отправки, и все вложения готовы.
@@ -175,7 +185,10 @@ class _MessageInputState extends ConsumerState<MessageInput> {
         !widget.isLoading &&
         allAttachmentsReady;
 
-    final canAttach = _canAttach(chatState, sessionState.agentId);
+    final canAttach = _canAttach(
+      draftIsLoading: draftState.isLoading,
+      currentAgentId: sessionState.agentId,
+    );
 
     return Container(
       padding: const EdgeInsets.all(12.0),
@@ -200,7 +213,7 @@ class _MessageInputState extends ConsumerState<MessageInput> {
           mainAxisSize: MainAxisSize.min,
           children: [
             // Превью прикреплённых файлов — только если есть что показывать.
-            if (hasAttachments) _buildAttachmentsBar(chatState),
+            if (hasAttachments) _buildAttachmentsBar(draftState),
 
             // Основная строка: прикрепить, микрофон, поле ввода, отправка.
             Row(
@@ -311,7 +324,12 @@ class _MessageInputState extends ConsumerState<MessageInput> {
   // ПРЕВЬЮ ВЛОЖЕНИЙ
   // ============================================================
 
-  Widget _buildAttachmentsBar(ChatState chatState) {
+  /// Список превью прикреплённых файлов.
+  ///
+  /// Источник — `AttachmentDraftState.attachments` (черновик).
+  /// Тап на крестик удаляет вложение из черновика — **не** с сервера
+  /// (сервер сам подчистит «осиротевший» объект).
+  Widget _buildAttachmentsBar(AttachmentDraftState draftState) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0),
       child: SizedBox(
@@ -320,15 +338,15 @@ class _MessageInputState extends ConsumerState<MessageInput> {
           scrollDirection: Axis.horizontal,
           // Небольшой отступ сверху, чтобы крестик удаления не резался.
           padding: const EdgeInsets.only(top: 8),
-          itemCount: chatState.pendingAttachments.length,
+          itemCount: draftState.attachments.length,
           separatorBuilder: (_, __) => const SizedBox(width: 8),
           itemBuilder: (context, index) {
-            final attachment = chatState.pendingAttachments[index];
+            final attachment = draftState.attachments[index];
             return AttachmentPreview(
               attachment: attachment,
               onRemove: () {
                 ref
-                    .read(chatProvider.notifier)
+                    .read(attachmentDraftProvider.notifier)
                     .removeAttachment(attachment.localId);
               },
             );
