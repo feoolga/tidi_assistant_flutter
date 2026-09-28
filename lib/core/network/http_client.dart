@@ -194,39 +194,86 @@ class AppHttpClient {
   /// POST-запрос с multipart/form-data. **Не бросает на `>= 400`.**
   ///
   /// Особенности:
+  /// - **Принимает список файлов.** Один файл — это список из одного
+  ///   элемента. Единый метод для обоих сценариев: `document_chat`
+  ///   (один файл) и RAG (пачка файлов).
   /// - **Отдельный таймаут** [timeout] — по умолчанию [AppConfig.uploadTimeout]
-  ///   (10 минут), потому что сервер синхронно прогоняет файл через MinerU.
+  ///   (10 минут) для `document_chat`. Для RAG передаём
+  ///   [AppConfig.ragUploadTimeout] явно (15 минут).
   /// - **Не бросает на `>= 400`** — каждый статус здесь несёт бизнес-смысл:
   ///   201 = успех, 400 = проблема с запросом, 413 = файл большой,
   ///   502 = MinerU упал, 503 = перегрузка. Разбор — задача репозитория.
   /// - **Транспортные ошибки бросает** как обычно: нет сети → NetworkException,
   ///   таймаут → NetworkException.
   ///
-  /// Пример:
+  /// **Про `fileField`:** это **имя** поля формы, которое повторяется для
+  /// каждого файла. У `document_chat` — `'file'` (`-F "file=@a.pdf"`).
+  /// У RAG — `'files'` (`-F "files=@a.pdf" -F "files=@b.docx"`). Бэкенд
+  /// различает файлы по **повторению** имени, а не по разным именам.
+  ///
+  /// Пример (один файл — `document_chat`):
   /// ```dart
   /// final response = await client.postMultipart(
   ///   '/agents/document_chat/v1/files',
-  ///   file: File('/path/to/накладная.pdf'),
+  ///   files: [File('/path/to/накладная.pdf')],
   ///   fields: {'conversation_id': 'cid-42'},
+  /// );
+  /// ```
+  ///
+  /// Пример (пачка — RAG):
+  /// ```dart
+  /// final response = await client.postMultipart(
+  ///   '/agents/agentic_rag/v1/platform/rags/$ragId/documents',
+  ///   files: [File('a.pdf'), File('b.docx')],
+  ///   fileField: 'files',
+  ///   timeout: AppConfig.ragUploadTimeout,
   /// );
   /// ```
   Future<http.Response> postMultipart(
     String path, {
-    required File file,
+    required List<File> files,
     String fileField = 'file',
     Map<String, String>? fields,
     Map<String, String>? headers,
     Duration? timeout,
   }) async {
+    // Пустой список — ошибка программиста. Молча делать запрос без
+    // файлов бессмысленно: бэкенд вернёт 400, и мы потратим раунд-трип.
+    if (files.isEmpty) {
+      throw ArgumentError.value(
+        files,
+        'files',
+        'Список файлов не может быть пустым',
+      );
+    }
+
     final uri = _buildUri(path);
     final allHeaders = _mergeHeaders(headers);
     final effectiveTimeout = timeout ?? AppConfig.uploadTimeout;
 
+    // Считаем суммарный размер заранее — для лога.
+    // Future.wait запускает чтение размеров параллельно, а не по очереди.
+    final sizes = await Future.wait(files.map((f) => f.length()));
+    final totalBytes = sizes.fold<int>(0, (sum, size) => sum + size);
+
     AppLogger.info('POST (multipart) $uri');
     AppLogger.debug(
-      'Загружаем файл: ${file.path.split('/').last} '
-      '(${await file.length()} байт)',
+      'Загружаем файлов: ${files.length}, суммарно $totalBytes байт',
     );
+
+    // Список имён — только первые несколько, чтобы не засорять лог
+    // на больших пачках.
+    if (files.length <= 5) {
+      for (final file in files) {
+        AppLogger.debug('  - ${file.path.split('/').last}');
+      }
+    } else {
+      final preview = files
+          .take(3)
+          .map((f) => f.path.split('/').last)
+          .join(', ');
+      AppLogger.debug('  - первые 3: $preview, ...');
+    }
 
     try {
       final request = http.MultipartRequest('POST', uri)
@@ -236,13 +283,16 @@ class AppHttpClient {
         request.fields.addAll(fields);
       }
 
-      // fromPath — предпочтительнее fromBytes: файл читается по кускам
-      // по мере отправки, а не грузится целиком в память.
-      final multipartFile = await http.MultipartFile.fromPath(
-        fileField,
-        file.path,
-      );
-      request.files.add(multipartFile);
+      // Добавляем каждый файл под **одним и тем же** именем поля.
+      // `fromPath` — предпочтительнее `fromBytes`: файл читается
+      // по кускам по мере отправки, а не грузится целиком в память.
+      for (final file in files) {
+        final multipartFile = await http.MultipartFile.fromPath(
+          fileField,
+          file.path,
+        );
+        request.files.add(multipartFile);
+      }
 
       final streamedResponse = await _client
           .send(request)
@@ -257,17 +307,17 @@ class AppHttpClient {
       return response;
     } on TimeoutException catch (e, stackTrace) {
       AppLogger.error(
-        'Таймаут при загрузке файла: $path '
+        'Таймаут при загрузке файлов: $path '
         '(лимит: ${effectiveTimeout.inMinutes} мин)',
         e,
         stackTrace,
       );
       throw NetworkException.timeout(e);
     } on http.ClientException catch (e, stackTrace) {
-      AppLogger.error('Ошибка сети при загрузке файла: $path', e, stackTrace);
+      AppLogger.error('Ошибка сети при загрузке файлов: $path', e, stackTrace);
       throw NetworkException.connectionError(e);
     } catch (e, stackTrace) {
-      AppLogger.error('Ошибка при загрузке файла: $path', e, stackTrace);
+      AppLogger.error('Ошибка при загрузке файлов: $path', e, stackTrace);
       throw NetworkException.connectionError(e);
     }
   }

@@ -177,7 +177,9 @@ void main() {
     test('сравнение со строкой → false', () {
       final a = MessageId.parse('resp_$uuid');
 
-      expect(a == 'resp_$uuid', isFalse);
+      // Явно используем матчер equals — чтобы анализатор
+      // не ругался на сравнение несвязанных типов.
+      expect(a, isNot(equals('resp_$uuid')));
     });
   });
 

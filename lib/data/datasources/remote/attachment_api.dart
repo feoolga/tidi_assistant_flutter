@@ -54,7 +54,10 @@ class AttachmentApi {
 
     return _httpClient.postMultipart(
       '/agents/document_chat/v1/files',
-      file: file,
+      // `document_chat` принимает один файл. `postMultipart` теперь
+      // работает со списком — оборачиваем одиночный файл в список
+      // из одного элемента.
+      files: [file],
       fields: fields,
     );
   }
