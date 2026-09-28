@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:tidi_assistant_flutter/core/errors/error_handler.dart';
 import 'package:tidi_assistant_flutter/core/errors/file_exceptions.dart';
 import 'package:tidi_assistant_flutter/core/errors/network_exceptions.dart';
+import 'package:tidi_assistant_flutter/core/errors/rag_exceptions.dart';
 import 'package:tidi_assistant_flutter/core/errors/server_exceptions.dart';
 
 void main() {
@@ -186,6 +187,89 @@ void main() {
 
       // Это два разных класса
       expect(generalResult.runtimeType, isNot(fileResult.runtimeType));
+    });
+  });
+
+  // ============================================================
+  // handleRagCreation — ОБРАБОТКА ОШИБОК СОЗДАНИЯ RAG
+  // ============================================================
+
+  group('handleRagCreation', () {
+    test('RagException проходит как есть', () {
+      final original = RagException.limitReached();
+      final result = ErrorHandler.handleRagCreation(original);
+      expect(result, same(original));
+    });
+
+    test('TimeoutException → RagException.createFailed', () {
+      final error = TimeoutException('boom');
+      final result = ErrorHandler.handleRagCreation(error);
+
+      expect(result, isA<RagException>());
+      expect(result.code, 'RAG_CREATE_FAILED');
+      expect(result.originalError, same(error));
+    });
+
+    test('http.ClientException → RagException.createFailed', () {
+      final error = http.ClientException('no internet');
+      final result = ErrorHandler.handleRagCreation(error);
+
+      expect(result, isA<RagException>());
+      expect(result.code, 'RAG_CREATE_FAILED');
+    });
+
+    test('ServerException → RagException.createFailed', () {
+      final error = ServerException.clientError(statusCode: 500);
+      final result = ErrorHandler.handleRagCreation(error);
+
+      expect(result, isA<RagException>());
+      expect(result.code, 'RAG_CREATE_FAILED');
+    });
+  });
+
+  // ============================================================
+  // handleRagUpload — ОБРАБОТКА ОШИБОК ЗАГРУЗКИ В RAG
+  // ============================================================
+
+  group('handleRagUpload', () {
+    test('RagException проходит как есть', () {
+      final original = RagException.fileTooLarge();
+      final result = ErrorHandler.handleRagUpload(original);
+      expect(result, same(original));
+    });
+
+    test('TimeoutException → RagException.uploadFailed', () {
+      final error = TimeoutException('boom');
+      final result = ErrorHandler.handleRagUpload(error);
+
+      expect(result, isA<RagException>());
+      expect(result.code, 'RAG_UPLOAD_FAILED');
+      expect(result.originalError, same(error));
+    });
+
+    test('http.ClientException → RagException.uploadFailed', () {
+      final error = http.ClientException('no internet');
+      final result = ErrorHandler.handleRagUpload(error);
+
+      expect(result, isA<RagException>());
+      expect(result.code, 'RAG_UPLOAD_FAILED');
+    });
+  });
+
+  // ============================================================
+  // РАЗДЕЛЕНИЕ КОНТЕКСТОВ RAG
+  // ============================================================
+
+  group('разделение контекстов RAG', () {
+    test('одна и та же ошибка даёт разные RagException', () {
+      final error = TimeoutException('timeout');
+
+      final creation = ErrorHandler.handleRagCreation(error);
+      final upload = ErrorHandler.handleRagUpload(error);
+
+      expect(creation.code, 'RAG_CREATE_FAILED');
+      expect(upload.code, 'RAG_UPLOAD_FAILED');
+      expect(creation.runtimeType, upload.runtimeType);
     });
   });
 }

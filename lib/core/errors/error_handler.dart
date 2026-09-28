@@ -8,6 +8,7 @@ import '../logger/app_logger.dart';
 import 'app_exception.dart';
 import 'file_exceptions.dart';
 import 'network_exceptions.dart';
+import 'rag_exceptions.dart';
 import 'server_exceptions.dart';
 
 /// Универсальный обработчик ошибок.
@@ -118,7 +119,78 @@ class ErrorHandler {
   }
 
   // ============================================================
-  // 3. ПРЕОБРАЗОВАНИЕ (БЕЗ ЛОГИРОВАНИЯ)
+  // 3. ОБРАБОТЧИКИ RAG
+  // ============================================================
+
+  /// Обработать ошибку, возникшую при **создании** RAG-набора.
+  ///
+  /// Отличается от [handle] **сообщениями** для пользователя: в контексте
+  /// создания набора он должен видеть «не удалось создать RAG-набор»,
+  /// а не «сервер не отвечает».
+  ///
+  /// **Логика:**
+  /// - [RagException] пропускаем как есть (это уже готовый результат);
+  /// - [ServerException] переводим в [RagException.createFailed]
+  ///   (fallback — обычно `RagRepository` разбирает его сам);
+  /// - прочие [AppException] пропускаем;
+  /// - транспортные (`http.ClientException`, `TimeoutException`,
+  ///   `FormatException`) и всё остальное → [RagException.createFailed].
+  ///
+  /// **Логирует так же, как [handle].**
+  static AppException handleRagCreation(
+    Object error, [
+    StackTrace? stackTrace,
+    String? context,
+    Map<String, dynamic>? contextData,
+  ]) {
+    final effectiveStackTrace = _ensureStackTrace(stackTrace);
+    final appException = _convertRagCreation(error);
+
+    _log(
+      error: appException,
+      stackTrace: effectiveStackTrace,
+      context: context,
+      contextData: contextData,
+    );
+
+    return appException;
+  }
+
+  /// Обработать ошибку, возникшую при **загрузке документов** в RAG-набор.
+  ///
+  /// **Важно:** загрузка документов в RAG **не атомарна**. Ошибка на
+  /// одном из файлов оставляет ранее принятые файлы в наборе. Поэтому
+  /// после этой ошибки вызывающий код **должен** перечитать
+  /// `GET /v1/platform/rags/{id}/documents`, чтобы узнать точное
+  /// состояние. Но это — задача `RagRepository` / UI, не `ErrorHandler`.
+  ///
+  /// **Логика:**
+  /// - [RagException] пропускаем как есть;
+  /// - [ServerException] переводим в [RagException.uploadFailed]
+  ///   (fallback);
+  /// - прочие [AppException] пропускаем;
+  /// - транспортные и всё остальное → [RagException.uploadFailed].
+  static AppException handleRagUpload(
+    Object error, [
+    StackTrace? stackTrace,
+    String? context,
+    Map<String, dynamic>? contextData,
+  ]) {
+    final effectiveStackTrace = _ensureStackTrace(stackTrace);
+    final appException = _convertRagUpload(error);
+
+    _log(
+      error: appException,
+      stackTrace: effectiveStackTrace,
+      context: context,
+      contextData: contextData,
+    );
+
+    return appException;
+  }
+
+  // ============================================================
+  // 4. ПРЕОБРАЗОВАНИЕ (БЕЗ ЛОГИРОВАНИЯ)
   // ============================================================
 
   /// Преобразовать любое исключение в [AppException] — **без логирования**.
@@ -200,8 +272,80 @@ class ErrorHandler {
     return FileException.uploadFailed(error);
   }
 
+  /// Преобразовать любое исключение в [AppException] для контекста
+  /// **создания** RAG-набора.
+  ///
+  /// **Не логирует** — логирование делает [handleRagCreation].
+  static AppException _convertRagCreation(Object error) {
+    // RagException — уже готовый, пропускаем.
+    if (error is RagException) return error;
+
+    // NetworkException — переводим в createFailed.
+    if (error is NetworkException) {
+      return RagException.createFailed(error);
+    }
+
+    // ServerException — fallback (обычно репозиторий разбирает его сам).
+    if (error is ServerException) {
+      return RagException.createFailed(error);
+    }
+
+    // Прочие AppException (бизнес-исключения) — пропускаем.
+    if (error is AppException) return error;
+
+    // Транспортные и парсинговые — на случай, если что-то не обёрнуто.
+    if (error is http.ClientException) {
+      return RagException.createFailed(error);
+    }
+    if (error is TimeoutException) {
+      return RagException.createFailed(error);
+    }
+    if (error is FormatException) {
+      return RagException.createFailed(error);
+    }
+
+    // Всё остальное — общий createFailed.
+    return RagException.createFailed(error);
+  }
+
+  /// Преобразовать любое исключение в [AppException] для контекста
+  /// **загрузки документов** в RAG-набор.
+  ///
+  /// **Не логирует** — логирование делает [handleRagUpload].
+  static AppException _convertRagUpload(Object error) {
+    // RagException — уже готовый, пропускаем.
+    if (error is RagException) return error;
+
+    // NetworkException — переводим в uploadFailed.
+    if (error is NetworkException) {
+      return RagException.uploadFailed(error: error);
+    }
+
+    // ServerException — fallback (обычно репозиторий разбирает его сам).
+    if (error is ServerException) {
+      return RagException.uploadFailed(error: error);
+    }
+
+    // Прочие AppException — пропускаем.
+    if (error is AppException) return error;
+
+    // Транспортные и парсинговые.
+    if (error is http.ClientException) {
+      return RagException.uploadFailed(error: error);
+    }
+    if (error is TimeoutException) {
+      return RagException.uploadFailed(error: error);
+    }
+    if (error is FormatException) {
+      return RagException.uploadFailed(error: error);
+    }
+
+    // Всё остальное.
+    return RagException.uploadFailed(error: error);
+  }
+
   // ============================================================
-  // 4. ЛОГИРОВАНИЕ (ОБЩЕЕ)
+  // 5. ЛОГИРОВАНИЕ (ОБЩЕЕ)
   // ============================================================
 
   /// Залогировать обработанную ошибку.
@@ -222,7 +366,7 @@ class ErrorHandler {
   }
 
   // ============================================================
-  // 5. БРОСАНИЕ
+  // 6. БРОСАНИЕ
   // ============================================================
 
   /// Обработать и выбросить [AppException].
@@ -245,8 +389,29 @@ class ErrorHandler {
     throw handleFileUpload(error, stackTrace, context, contextData);
   }
 
+  /// Обработать и выбросить [AppException] в контексте создания RAG-набора.
+  static void throwRagCreationException(
+    Object error, [
+    StackTrace? stackTrace,
+    String? context,
+    Map<String, dynamic>? contextData,
+  ]) {
+    throw handleRagCreation(error, stackTrace, context, contextData);
+  }
+
+  /// Обработать и выбросить [AppException] в контексте загрузки
+  /// документов в RAG-набор.
+  static void throwRagUploadException(
+    Object error, [
+    StackTrace? stackTrace,
+    String? context,
+    Map<String, dynamic>? contextData,
+  ]) {
+    throw handleRagUpload(error, stackTrace, context, contextData);
+  }
+
   // ============================================================
-  // 6. ХЕЛПЕРЫ
+  // 7. ХЕЛПЕРЫ
   // ============================================================
 
   /// Получить сообщение для пользователя из ошибки.
