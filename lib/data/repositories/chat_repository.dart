@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../core/errors/business_exceptions.dart';
+import '../../core/config/app_config.dart';
 import '../../core/errors/error_handler.dart';
 import '../../core/errors/server_exceptions.dart';
 import '../../core/logger/app_logger.dart';
@@ -413,6 +414,12 @@ class ChatRepository {
   /// Responses API. Вложения без `remoteId` молча отбрасываются —
   /// см. [_buildInput].
   ///
+  /// [ragId] — опциональный ID RAG-набора. Если задан, поле `model`
+  /// в теле запроса собирается как `"rag/<ragId>"` (см.
+  /// `AppConfig.ragModelId`). [agentId] при этом остаётся
+  /// `"agentic_rag"` — **он нужен для путей** (`/agents/{agentId}/...`),
+  /// а не для `model`. Разные сущности — разные поля.
+  ///
   /// **Обработка ошибок:** `postStream` **сам** бросает `ServerException`
   /// на `>= 400`, читая **тело** ошибки. Нам **не** надо проверять
   /// статус — только пробросить.
@@ -420,12 +427,23 @@ class ChatRepository {
     required String text,
     String? conversationId,
     String? agentId,
+    String? ragId,
     List<Attachment> attachments = const [],
   }) async {
     AppLogger.info('Отправка стрим-запроса: "$text"');
 
+    // Для RAG model — "rag/<ragId>". Для обычных агентов — agentId
+    // или 'auto'. `agentId` при RAG остаётся "agentic_rag" — он для
+    // путей, а не для model.
+    final String model;
+    if (ragId != null) {
+      model = AppConfig.ragModelId(ragId);
+    } else {
+      model = agentId ?? 'auto';
+    }
+
     final Map<String, dynamic> body = {
-      'model': agentId ?? 'auto',
+      'model': model,
       'input': _buildInput(text: text, attachments: attachments),
       'stream': true,
     };
@@ -434,6 +452,8 @@ class ChatRepository {
       body['conversation_id'] = conversationId;
       AppLogger.debug('📎 Продолжаем чат: $conversationId');
     }
+
+    AppLogger.debug('📤 model=$model, ragId=$ragId, agentId=$agentId');
 
     try {
       final response = await _api.sendMessage(body: body);
@@ -446,6 +466,7 @@ class ChatRepository {
         'Ошибка при отправке стрим-запроса',
         {
           'agentId': agentId,
+          'ragId': ragId,
           'conversationId': conversationId,
           'attachments_count': attachments.length,
         },

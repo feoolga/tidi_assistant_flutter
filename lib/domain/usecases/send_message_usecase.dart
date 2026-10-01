@@ -20,11 +20,32 @@ class SendMessageParams {
   /// Текст сообщения.
   final String text;
 
-  /// ID агента (если уже выбран) — используется для роутинга на бэкенде.
+  /// ID агента — используется для путей `/agents/{agentId}/v1/...`
+  /// и как значение поля `model` в теле запроса (для обычных агентов).
+  ///
+  /// Для RAG-сессии — всегда `"agentic_rag"`. Конкретный набор
+  /// задаётся отдельно через [ragId], а `model` собирается как
+  /// `"rag/<ragId>"` (см. [ragId] и `AppConfig.ragModelId`).
+  ///
+  /// `null` — сессия ещё не определена, роутинг сделает бэкенд
+  /// (`model: "auto"`).
   final String? agentId;
 
-  /// ID чата (если уже создан) — используется для продолжения диалога.
+  /// ID чата (`conversation_id`) — для продолжения диалога.
+  ///
+  /// `null` — новый чат, сессия ещё не создана.
   final String? sessionId;
+
+  /// ID RAG-набора — **только** для RAG-сессии.
+  ///
+  /// `null` для обычных агентов (`document_chat`, `epoz`, `chat`, ...).
+  /// Для RAG-сессии — UUID пользовательского набора документов.
+  ///
+  /// Когда [ragId] задан, `model` в теле запроса собирается как
+  /// `"rag/<ragId>"` — через `AppConfig.ragModelId`. Отдельное поле
+  /// нужно потому, что `agentId` для путей остаётся `"agentic_rag"`,
+  /// а `model` — другое значение.
+  final String? ragId;
 
   /// Вложения, приложенные пользователем к этому сообщению.
   ///
@@ -37,6 +58,7 @@ class SendMessageParams {
     required this.text,
     this.agentId,
     this.sessionId,
+    this.ragId,
     this.attachments = const [],
   });
 
@@ -45,6 +67,12 @@ class SendMessageParams {
 
   /// Есть ли вложения у сообщения.
   bool get hasAttachments => attachments.isNotEmpty;
+
+  /// Это RAG-сессия?
+  ///
+  /// `true`, если задан [ragId]. Используется в репозитории для
+  /// решения, как собирать `model`.
+  bool get isRag => ragId != null;
 }
 
 // ============================================================
@@ -90,6 +118,7 @@ class SendMessageUseCase {
         text: params.text,
         conversationId: params.sessionId,
         agentId: params.agentId,
+        ragId: params.ragId,
         attachments: params.attachments,
       );
 
@@ -150,23 +179,29 @@ class SendMessageUseCase {
           return;
         }
 
-        // --- Ошибка в стриме (event: error) ---
+        // --- Ошибка в стриме ---
         //
-        // README document_chat: «Ошибка в процессе генерации —
-        // `event: error` с sequence_number: 9999».
+        // Поддерживаем **оба** варианта имени события:
+        // - `event: error` — обычные агенты (`document_chat`, `epoz`, ...);
+        //   см. README document_chat: «Ошибка в процессе генерации —
+        //   `event: error` с sequence_number: 9999».
+        // - `event: response.error` — RAG-агент (`agentic_rag`);
+        //   см. README Agentic RAG: при ошибке во время генерации
+        //   приходит `event: response.error` с телом
+        //   `{"error": {...}, "id": "resp_<uuid>"}`.
         //
-        // Формат тела (по README): JSON с полем `error` в стиле
-        // HTTP-ошибок: {"error": {"message": "...", "type": "server_error"}}.
-        //
-        // Пробуем разные варианты — на случай, если бэкенд присылает
-        // упрощённую форму.
-        if (eventType == 'error') {
+        // Тело в обоих случаях одинаковое — `_parseErrorEvent` его
+        // разбирает одинаково, потому что формат `error`-объекта
+        // общий для обеих форм.
+        if (eventType == 'error' || eventType == 'response.error') {
           final appException = _parseErrorEvent(event);
-          // Логируем напрямую: ошибка уже AppException (создана в
-          // _parseErrorEvent), ErrorHandler.handle здесь не нужен.
 
+          // Логируем напрямую: ошибка уже AppException (создана в
+          // `_parseErrorEvent`), ErrorHandler.handle здесь не нужен.
+          // Логируем `eventType` — чтобы видеть в логах, какое именно
+          // имя события пришло (полезно для отладки).
           AppLogger.logException(
-            'Ошибка в SSE-потоке (event: error)',
+            'Ошибка в SSE-потоке (event: $eventType)',
             appException,
           );
           controller.addError(appException);
@@ -202,9 +237,10 @@ class SendMessageUseCase {
   // 3. РАЗБОР EVENT: ERROR
   // ============================================================
 
-  /// Превращает `event: error` из SSE-потока в [AppException].
+  /// Превращает `event: error` или `event: response.error` из SSE-потока
+  /// в [AppException].
   ///
-  /// **Формат (по README):** JSON с полем `error`, как в HTTP-ошибках:
+  /// **Формат (по README).** Обычные агенты (`document_chat`, `epoz`):
   /// ```json
   /// {
   ///   "type": "error",
@@ -217,6 +253,23 @@ class SendMessageUseCase {
   ///   }
   /// }
   /// ```
+  ///
+  /// RAG-агент (`agentic_rag`):
+  /// ```json
+  /// {
+  ///   "error": {"message": "...", "type": "...", "code": null},
+  ///   "id": "resp_<uuid>"
+  /// }
+  /// ```
+  /// `id` присутствует **только** если pending message уже создан
+  /// (после `response.created`). При ранней валидации — `id`
+  /// отсутствует. На разбор `error` это не влияет: парсим
+  /// **только поле `error`**, `id` игнорируем.
+  ///
+  /// **Почему один метод на оба события:** формат `error`-объекта
+  /// **одинаковый** в обеих формах. Различается только имя события
+  /// (`error` vs `response.error`) — его мы уже знаем в вызывающем
+  /// коде (`eventType`) и используем в логе.
   ///
   /// **Защитный парсинг:** бэкенд может присылать упрощённую форму
   /// (`{"message": "..."}`), поэтому пробуем несколько вариантов.

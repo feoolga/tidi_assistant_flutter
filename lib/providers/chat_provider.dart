@@ -323,10 +323,17 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
 
       // 4. Отправляем сообщение.
+      //
+      // `ragId` берём из sessionProvider — для RAG-сессии он будет
+      // установлен (при создании набора). Для обычных агентов — `null`,
+      // и `SendMessageUseCase` соберёт `model` из `agentId`.
+      final ragId = _ref.read(sessionProvider).ragId;
+
       final params = SendMessageParams(
         text: text,
         agentId: currentAgentId,
         sessionId: currentSessionId,
+        ragId: ragId,
         attachments: attachments,
       );
 
