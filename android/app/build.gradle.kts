@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    ndkVersion = "27.0.12077973"
+    ndkVersion = flutter.ndkVersion
     namespace = "com.example.tidi_assistant_flutter"
     compileSdk = flutter.compileSdkVersion
 

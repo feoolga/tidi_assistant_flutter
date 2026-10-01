@@ -297,16 +297,28 @@ class ChatNotifier extends StateNotifier<ChatState> {
         );
         currentSessionId = session.id;
 
+        // Ищем человекочитаемое имя для UI.
+        // `agentsByIdProvider` — Map<String, Agent>, единый источник
+        // правды об агентах (приходят с бэкенда через /v1/models).
+        // Если агент ещё не загружен или не найден — `null`, UI покажет
+        // fallback «AI Ассистент».
+        final displayName = _ref.read(agentsByIdProvider)[currentAgentId]?.name;
+
         // Обновляем SSOT — sessionProvider.
-        // UI читает agentId/sessionId напрямую оттуда, поэтому
-        // agentId и sessionId здесь гарантированно non-null:
+        // UI читает agentId/sessionId/agentDisplayName напрямую оттуда,
+        // поэтому agentId и sessionId здесь гарантированно non-null:
         // getRoute возвращает String, ChatSession.id — String.
         _ref
             .read(sessionProvider.notifier)
-            .setSession(currentAgentId, currentSessionId);
+            .setSession(
+              currentAgentId,
+              currentSessionId,
+              agentDisplayName: displayName,
+            );
 
         AppLogger.info(
-          'Чат создан: agent=$currentAgentId, session=$currentSessionId',
+          'Чат создан: agent=$currentAgentId, session=$currentSessionId, '
+          'displayName=$displayName',
         );
       }
 
@@ -350,6 +362,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
             // Обновляем SSOT, только если сервер прислал **полную** пару.
             // Иначе оставляем как есть — sessionProvider уже правильный
             // (обновили при создании чата).
+            //
+            // **Не передаём agentDisplayName** — оно уже установлено
+            // при создании чата (в блоке выше). Сервер имя не шлёт,
+            // а если передать явно `null` — затрём текущее. `setSession`
+            // через `copyWithUnset` сохранит прежнее значение.
             if (agentId != null && conversationId != null) {
               _ref
                   .read(sessionProvider.notifier)
@@ -424,8 +441,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
       _setMessages(messages);
 
+      // Ищем человекочитаемое имя для UI.
+      // См. комментарий в `sendMessage` — почему `agentsByIdProvider`.
+      final displayName = _ref.read(agentsByIdProvider)[agentId]?.name;
+
       // Обновляем SSOT — AppBar сразу покажет нужного агента.
-      _ref.read(sessionProvider.notifier).setSession(agentId, chatId);
+      _ref
+          .read(sessionProvider.notifier)
+          .setSession(agentId, chatId, agentDisplayName: displayName);
 
       AppLogger.info('Загружено сообщений: ${messages.length}');
     } catch (e, stackTrace) {

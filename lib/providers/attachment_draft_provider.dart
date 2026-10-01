@@ -265,9 +265,18 @@ class AttachmentDraftNotifier extends StateNotifier<AttachmentDraftState> {
         conversationId = session.id;
 
         // Обновляем SSOT — sessionProvider.
+        //
+        // `agentDisplayName` — хардкод «Документы». Почему не через
+        // `agentsByIdProvider`: это внутренний вызов, `document_chat`
+        // известная константа. Достаточно литерала. Позже, когда
+        // появится реестр агентов с флагами — перепишем на lookup.
         _ref
             .read(sessionProvider.notifier)
-            .setSession('document_chat', conversationId);
+            .setSession(
+              'document_chat',
+              conversationId,
+              agentDisplayName: 'Документы',
+            );
       }
 
       // 6. Загружаем файл.

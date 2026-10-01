@@ -66,23 +66,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
   }
 
-  /// Получить имя агента для отображения в AppBar.
-  ///
-  /// **TODO (этап C):** заменить на `agentDisplayName` из `sessionProvider`.
-  /// Сейчас здесь хардкод-словарь — временное решение. При добавлении
-  /// нового агента (например, `agentic_rag`) словарь надо править.
-  String _getAgentName(String? agentId) {
-    if (agentId == null) return 'AI Ассистент';
-
-    final agentNames = {
-      'chat': 'Чат-агент',
-      'epoz': 'ЕПоЗ',
-      'ocr': 'OCR',
-      'document_chat': 'Документы',
-    };
-    return agentNames[agentId] ?? 'AI Ассистент';
-  }
-
   // ============================================================
   // МЕТОДЫ-ОБРАБОТЧИКИ СОБЫТИЙ
   // ============================================================
@@ -120,6 +103,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // `select` — чтобы `ChatScreen` перестраивался только при смене
     // `agentId`, а не при каждом изменении сессии.
     final currentAgentId = ref.watch(sessionProvider.select((s) => s.agentId));
+
+    // Человекочитаемое имя для AppBar — из sessionProvider.
+    // Имя приходит из SSOT: `ChatNotifier` (или `AttachmentDraftNotifier`) кладёт его
+    // в сессию при `setSession(...)`.
+    final agentDisplayName = ref.watch(
+      sessionProvider.select((s) => s.agentDisplayName),
+    );
 
     // ============================================================
     // SIDE EFFECTS — показ SnackBar'ов через ref.listen
@@ -214,7 +204,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              _getAgentName(currentAgentId),
+              // Fallback: если имя не установлено — показываем «AI Ассистент».
+              agentDisplayName ?? 'AI Ассистент',
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             if (currentAgentId != null)
