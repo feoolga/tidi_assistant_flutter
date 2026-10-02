@@ -1,5 +1,7 @@
 // lib/data/models/rag_document_dto.dart
 
+import '../../core/utils/json_parsing.dart';
+
 /// DTO документа RAG-набора — **зеркало JSON** от бэкенда.
 ///
 /// Соответствует элементу из:
@@ -118,7 +120,7 @@ class RagDocumentDto {
       filename: json['filename'] as String,
       status: json['status'] as String,
       sizeBytes: json['size_bytes'] as int?,
-      createdAt: _parseDateOrNull(json['created_at']),
+      createdAt: parseDateOrNull(json['created_at']),
       chunksCount: json['chunks_count'] as int?,
       error: json['error'] as String?,
       duplicateOf: json['duplicate_of'] as String?,
@@ -126,42 +128,7 @@ class RagDocumentDto {
   }
 
   // ============================================================
-  // 4. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
-  // ============================================================
-
-  /// Устойчивый парсинг даты из JSON.
-  ///
-  /// Возвращает `DateTime` или `null`:
-  /// - если значение — валидная ISO-8601 строка, парсим её;
-  /// - иначе (`null`, число, пустая строка, невалидный ISO) — `null`.
-  ///
-  /// **Почему не бросаем:** DTO — слой данных. Он должен быть
-  /// устойчив к неидеальному ответу сервера. «Что делать с плохой
-  /// датой» — не его ответственность. Маппер сам решит, показать
-  /// «дата неизвестна» или подставить `DateTime.now()`.
-  ///
-  /// **Копия из `ChatSessionDto`.** Пока дублирование «двух копий» —
-  /// терпимо. Если появится третий такой же метод — вынесем в общий
-  /// util `lib/core/utils/json_parsing.dart`.
-  ///
-  /// **Почему `dynamic`, а не `Object?`:** `json['key']` возвращает
-  /// `dynamic` — это **граница** между нетипизированным JSON
-  /// и типизированным Dart. Здесь `dynamic` оправдан.
-  static DateTime? _parseDateOrNull(dynamic value) {
-    if (value is String && value.isNotEmpty) {
-      try {
-        return DateTime.parse(value);
-      } on FormatException {
-        // Строка есть, но не ISO-8601.
-        return null;
-      }
-    }
-    // null, число, пустая строка — невалидные значения.
-    return null;
-  }
-
-  // ============================================================
-  // 5. ОТЛАДКА
+  // 4. ОТЛАДКА
   // ============================================================
 
   @override

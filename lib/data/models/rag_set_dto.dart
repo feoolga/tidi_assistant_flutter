@@ -1,5 +1,6 @@
 // lib/data/models/rag_set_dto.dart
 
+import '../../core/utils/json_parsing.dart';
 import 'documents_counts_dto.dart';
 import 'rag_config_dto.dart';
 
@@ -134,8 +135,8 @@ class RagSetDto {
       hasPending: json['has_pending'] as bool? ?? false,
       hasIcon: json['has_icon'] as bool? ?? false,
       config: _parseConfig(json['config']),
-      createdAt: _parseDateOrNull(json['created_at']),
-      updatedAt: _parseDateOrNull(json['updated_at']),
+      createdAt: parseDateOrNull(json['created_at']),
+      updatedAt: parseDateOrNull(json['updated_at']),
     );
   }
 
@@ -160,26 +161,6 @@ class RagSetDto {
   static RagConfigDto? _parseConfig(dynamic value) {
     if (value is Map<String, dynamic>) {
       return RagConfigDto.fromJson(value);
-    }
-    return null;
-  }
-
-  /// Устойчивый парсинг даты из JSON.
-  ///
-  /// **Копия из `RagDocumentDto`.** Это уже **третья** копия
-  /// (была в `ChatSessionDto`, `RagDocumentDto`, теперь здесь).
-  /// **Три копии — сигнал выносить в util.**
-  ///
-  /// **В D2.4** (или в следующем шаге) **вынесем** в общий
-  /// `lib/core/utils/json_parsing.dart` и заменим все три копии.
-  /// Пока оставляем здесь, чтобы **не раздувать** этот шаг.
-  static DateTime? _parseDateOrNull(dynamic value) {
-    if (value is String && value.isNotEmpty) {
-      try {
-        return DateTime.parse(value);
-      } on FormatException {
-        return null;
-      }
     }
     return null;
   }

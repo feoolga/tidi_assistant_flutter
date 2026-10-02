@@ -1,5 +1,7 @@
 // lib/data/models/rag_config_dto.dart
 
+import '../../core/utils/json_parsing.dart';
+
 /// DTO конфигурации RAG-набора — **зеркало JSON** от бэкенда.
 ///
 /// Соответствует полю `config` в ответе `GET /v1/platform/rags/{id}`:
@@ -69,42 +71,14 @@ class RagConfigDto {
   factory RagConfigDto.fromJson(Map<String, dynamic> json) {
     return RagConfigDto(
       prompt: json['prompt'] as String?,
-      temperature: _parseDoubleOrNull(json['temperature']),
+      temperature: parseDoubleOrNull(json['temperature']),
       topK: json['top_k'] as int?,
-      scoreThreshold: _parseDoubleOrNull(json['score_threshold']),
+      scoreThreshold: parseDoubleOrNull(json['score_threshold']),
     );
   }
 
   // ============================================================
-  // 4. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
-  // ============================================================
-
-  /// Устойчивый парсинг `double` из JSON.
-  ///
-  /// Возвращает `double` или `null`:
-  /// - если значение — `double`, возвращаем как есть;
-  /// - если `int` — приводим к `double` (`1` → `1.0`);
-  /// - если строка, которую можно распарсить (`"0.5"` → `0.5`) —
-  ///   **не** парсим, возвращаем `null` (сервер **обязан** присылать
-  ///   числа);
-  /// - иначе — `null`.
-  ///
-  /// **Почему обрабатываем `int`.** JSON не различает `1` и `1.0` —
-  /// оба «число». Dart при парсинге **может** дать `int`, если
-  /// сервер прислал `1`. Нам нужен `double`, чтобы не было
-  /// `TypeError` при `as double?`.
-  ///
-  /// **Почему не парсим строки.** Если сервер присылает `"0.5"`
-  /// (строкой) — это **баг контракта**. Хотим **узнать** о нём,
-  /// а не маскировать.
-  static double? _parseDoubleOrNull(dynamic value) {
-    if (value is double) return value;
-    if (value is int) return value.toDouble();
-    return null;
-  }
-
-  // ============================================================
-  // 5. ОТЛАДКА
+  // 4. ОТЛАДКА
   // ============================================================
 
   @override
