@@ -229,8 +229,77 @@ class AppHttpClient {
   ///   timeout: AppConfig.ragUploadTimeout,
   /// );
   /// ```
+  /// POST-запрос с multipart/form-data. Обёртка над [multipart]
+  /// с `method: 'POST'`.
+  ///
+  /// **Оставлен для обратной совместимости.** Все существующие
+  /// вызовы (`AttachmentApi.uploadFile`) работают как раньше.
+  ///
+  /// **Для не-POST multipart** (например, `PUT .../icon` в RAG) —
+  /// используйте [multipart] напрямую с нужным `method`.
   Future<http.Response> postMultipart(
     String path, {
+    required List<File> files,
+    String fileField = 'file',
+    Map<String, String>? fields,
+    Map<String, String>? headers,
+    Duration? timeout,
+  }) {
+    return multipart(
+      path,
+      method: 'POST',
+      files: files,
+      fileField: fileField,
+      fields: fields,
+      headers: headers,
+      timeout: timeout,
+    );
+  }
+
+  /// Multipart-запрос с любым HTTP-методом (POST, PUT, ...).
+  ///
+  /// **Не бросает на `>= 400`** — статусы в multipart несут
+  /// бизнес-смысл (413, 502, ...). Разбор — задача репозитория.
+  ///
+  /// **Таймаут.** По умолчанию [AppConfig.uploadTimeout] (10 мин).
+  /// Для RAG передавайте [AppConfig.ragUploadTimeout] (15 мин) —
+  /// пачка из N файлов может быть дольше.
+  ///
+  /// **`fileField`** — имя поля формы. Одно **для всех** файлов;
+  /// бэкенд различает их по **повторению** имени.
+  ///
+  /// Пример (один файл — `document_chat`):
+  /// ```dart
+  /// final response = await client.multipart(
+  ///   '/agents/document_chat/v1/files',
+  ///   files: [File('/path/to/накладная.pdf')],
+  ///   fields: {'conversation_id': 'cid-42'},
+  /// );
+  /// ```
+  ///
+  /// Пример (пачка — RAG):
+  /// ```dart
+  /// final response = await client.multipart(
+  ///   '/agents/agentic_rag/v1/platform/rags/$ragId/documents',
+  ///   files: [File('a.pdf'), File('b.docx')],
+  ///   fileField: 'files',
+  ///   timeout: AppConfig.ragUploadTimeout,
+  /// );
+  /// ```
+  ///
+  /// Пример (`PUT` — иконка RAG):
+  /// ```dart
+  /// final response = await client.multipart(
+  ///   '/agents/agentic_rag/v1/platform/rags/$ragId/icon',
+  ///   method: 'PUT',
+  ///   files: [File('/path/to/icon.png')],
+  ///   fileField: 'file',
+  ///   timeout: AppConfig.timeout,
+  /// );
+  /// ```
+  Future<http.Response> multipart(
+    String path, {
+    String method = 'POST',
     required List<File> files,
     String fileField = 'file',
     Map<String, String>? fields,
@@ -256,7 +325,7 @@ class AppHttpClient {
     final sizes = await Future.wait(files.map((f) => f.length()));
     final totalBytes = sizes.fold<int>(0, (sum, size) => sum + size);
 
-    AppLogger.info('POST (multipart) $uri');
+    AppLogger.info('$method (multipart) $uri');
     AppLogger.debug(
       'Загружаем файлов: ${files.length}, суммарно $totalBytes байт',
     );
@@ -276,7 +345,7 @@ class AppHttpClient {
     }
 
     try {
-      final request = http.MultipartRequest('POST', uri)
+      final request = http.MultipartRequest(method, uri)
         ..headers.addAll(allHeaders);
 
       if (fields != null && fields.isNotEmpty) {
@@ -300,24 +369,28 @@ class AppHttpClient {
 
       final response = await http.Response.fromStream(streamedResponse);
 
-      AppLogger.debug('POST (multipart) ${response.statusCode}');
+      AppLogger.debug('$method (multipart) ${response.statusCode}');
       _logResponse(response);
 
       // НЕ бросаем на >= 400 — разбор статуса на стороне репозитория.
       return response;
     } on TimeoutException catch (e, stackTrace) {
       AppLogger.error(
-        'Таймаут при загрузке файлов: $path '
+        'Таймаут при $method (multipart): $path '
         '(лимит: ${effectiveTimeout.inMinutes} мин)',
         e,
         stackTrace,
       );
       throw NetworkException.timeout(e);
     } on http.ClientException catch (e, stackTrace) {
-      AppLogger.error('Ошибка сети при загрузке файлов: $path', e, stackTrace);
+      AppLogger.error(
+        'Ошибка сети при $method (multipart): $path',
+        e,
+        stackTrace,
+      );
       throw NetworkException.connectionError(e);
     } catch (e, stackTrace) {
-      AppLogger.error('Ошибка при загрузке файлов: $path', e, stackTrace);
+      AppLogger.error('Ошибка при $method (multipart): $path', e, stackTrace);
       throw NetworkException.connectionError(e);
     }
   }
