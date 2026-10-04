@@ -4,8 +4,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:http/http.dart' as http;
-
 import '../../core/config/app_config.dart';
 import '../../core/errors/error_handler.dart';
 import '../../core/errors/rag_exceptions.dart';

@@ -42,8 +42,12 @@ class ChatApi {
   Future<http.Response> createConversation({
     required String agentId,
     String? title,
+    String? ragId, // ← новое
   }) async {
-    final Map<String, dynamic> body = title != null ? {'title': title} : {};
+    final body = <String, dynamic>{
+      if (title != null) 'title': title,
+      if (ragId != null) 'rag_id': ragId,
+    };
     return await _httpClient.post(
       '/agents/$agentId/v1/platform/conversations',
       body: body,

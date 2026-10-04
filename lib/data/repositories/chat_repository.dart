@@ -132,11 +132,13 @@ class ChatRepository {
   Future<ChatSession> createConversation({
     required String agentId,
     String? title,
+    String? ragId,
   }) async {
     try {
       final response = await _api.createConversation(
         agentId: agentId,
         title: title,
+        ragId: ragId,
       );
 
       if (response.statusCode != 201) {
