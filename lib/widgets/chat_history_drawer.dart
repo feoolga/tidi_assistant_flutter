@@ -10,6 +10,7 @@ import '../providers/agent_provider.dart';
 import '../providers/chat_list_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/session_provider.dart';
+import '../screens/create_rag_screen.dart';
 import '../theme/app_theme.dart';
 
 class ChatHistoryDrawer extends ConsumerStatefulWidget {
@@ -69,6 +70,7 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                // ---- Кнопка «Новый чат» (основная, filled) ----
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -80,6 +82,39 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: AppTheme.primary,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // ---- Кнопка «Создать RAG» (второстепенная, outlined) ----
+                //
+                // **Почему outlined, а не filled.** «Новый чат» — основное
+                // действие для текущего экрана, RAG — второстепенное.
+                // Визуальная иерархия помогает пользователю.
+                //
+                // **Почему под «Новый чат».** Симметрично: два действия
+                // «создания» — рядом. Логично для запоминания.
+                //
+                // **Почему `Icons.auto_awesome`.** Меткий визуальный маркер
+                // «AI / магия» — RAG это про индексирование и умный поиск.
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      _openCreateRagScreen(context);
+                    },
+                    icon: const Icon(Icons.auto_awesome, size: 18),
+                    label: const Text('Создать RAG'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.6),
+                        width: 1,
+                      ),
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
@@ -114,6 +149,30 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
 
     // 2. Вызываем колбэк, который очистит локальное состояние
     widget.onChatCreated?.call();
+  }
+
+  /// Открыть экран создания RAG-набора.
+  ///
+  /// **Что делает:**
+  /// 1. Закрывает drawer (иначе он останется под новым экраном).
+  /// 2. Открывает `CreateRagScreen` через `Navigator.push`.
+  ///
+  /// **Почему `push`, а не `pushReplacement`.**
+  /// `ChatScreen` **должен** остаться в стеке — после создания чата
+  /// и возврата (`pop`) пользователь вернётся именно сюда.
+  /// `CreateRagScreen` при успехе **сам** сделает `pop`.
+  ///
+  /// **`context`** — родительский, не `dialogContext`. Drawer
+  /// закрывается **до** открытия — `Scaffold.of(context)` не нужен,
+  /// мы **не** работаем со `Scaffold`.
+  void _openCreateRagScreen(BuildContext context) {
+    // 1. Закрываем drawer — чтобы не «мигал» под новым экраном.
+    Navigator.of(context).pop();
+
+    // 2. Открываем экран создания RAG.
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const CreateRagScreen()));
   }
 
   /// Открыть диалог переименования чата.
