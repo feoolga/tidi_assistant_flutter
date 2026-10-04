@@ -7,6 +7,8 @@ import '../data/datasources/remote/chat_api.dart';
 import '../core/network/http_client.dart';
 import '../data/datasources/remote/attachment_api.dart';
 import '../data/repositories/attachment_repository.dart';
+import '../data/datasources/remote/rag_api.dart';
+import '../data/repositories/rag_repository.dart';
 
 // ============================================================
 // 1. ПРОВАЙДЕРЫ ДЛЯ НОВОЙ АРХИТЕКТУРЫ (РЕКОМЕНДУЕМЫЕ)
@@ -43,6 +45,24 @@ final attachmentApiProvider = Provider<AttachmentApi>((ref) {
 final attachmentRepositoryProvider = Provider<AttachmentRepository>((ref) {
   final api = ref.read(attachmentApiProvider);
   return AttachmentRepository(api: api);
+});
+
+/// Провайдер для RagApi.
+///
+/// Работает с тем же `httpClient`, что и `chatApi`/`attachmentApi` —
+/// общий пул TCP-соединений.
+final ragApiProvider = Provider<RagApi>((ref) {
+  final httpClient = ref.read(httpClientProvider);
+  return RagApi(httpClient: httpClient);
+});
+
+/// Провайдер для RagRepository.
+///
+/// Используется в `RagCreationNotifier` (D6), `ragListProvider` (D7),
+/// и в use-case-ах RAG.
+final ragRepositoryProvider = Provider<RagRepository>((ref) {
+  final api = ref.read(ragApiProvider);
+  return RagRepository(api: api);
 });
 
 /// Провайдер для списка агентов (НОВЫЙ, через Repository)
