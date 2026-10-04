@@ -78,7 +78,7 @@ enum RagCreationPhase {
 ///
 /// **Что НЕ здесь:**
 /// - сам чат (`ChatSession`) — он в `sessionProvider` (SSOT);
-/// - `agentId` — константа `AppConfig.ragAgentId`.
+/// - `agentId` — константа `AppConfig.ragChatAgentId`.
 class RagCreationState {
   final RagCreationPhase phase;
   final String? name;
@@ -307,7 +307,7 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
       _ref
           .read(sessionProvider.notifier)
           .setSession(
-            AppConfig.ragAgentId,
+            AppConfig.ragChatAgentId,
             session.id,
             ragId: ragId,
             agentDisplayName: name,

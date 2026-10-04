@@ -32,10 +32,11 @@ class RagApi {
 
   /// Префикс пути для всех RAG-эндпойнтов.
   ///
-  /// Собирается из [AppConfig.ragAgentId] — если бэкендер
+  /// Собирается из [AppConfig.ragIngestionAgentId] — если бэкендер
   /// переименует агента в реестре, поменяем **одно** место
   /// в `AppConfig`.
-  static const String _prefix = '/agents/${AppConfig.ragAgentId}/v1/platform';
+  static const String _prefix =
+      '/agents/${AppConfig.ragIngestionAgentId}/v1/platform';
 
   RagApi({AppHttpClient? httpClient})
     : _httpClient = httpClient ?? AppHttpClient();

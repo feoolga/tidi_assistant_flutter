@@ -69,7 +69,7 @@ void main() {
       expect(session.id, 'chat-42');
       expect(session.title, 'Мой RAG');
 
-      expect(repo.lastAgentId, AppConfig.ragAgentId);
+      expect(repo.lastAgentId, AppConfig.ragChatAgentId);
       expect(repo.lastAgentId, 'agentic_rag');
       expect(repo.lastRagId, 'rag-1');
       expect(repo.lastTitle, 'Мой RAG');

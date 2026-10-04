@@ -50,14 +50,14 @@ class StartRagChatUseCase {
   /// поставит дефолт).
   ///
   /// **Почему `agentId` захардкожен.** Для RAG-чата `agent_id` —
-  /// всегда `AppConfig.ragAgentId` (`'agentic_rag'`). Конкретный
+  /// всегда `AppConfig.ragChatAgentId` (`'agentic_rag'`). Конкретный
   /// набор задаётся **отдельно** через `ragId`. Смешивать их —
   /// значит путать «агента» и «набор».
   Future<ChatSession> execute({required String ragId, String? title}) async {
     AppLogger.info('Создание RAG-чата: ragId=$ragId, title="$title"');
 
     final session = await _chatRepository.createConversation(
-      agentId: AppConfig.ragAgentId,
+      agentId: AppConfig.ragChatAgentId,
       ragId: ragId,
       title: title,
     );

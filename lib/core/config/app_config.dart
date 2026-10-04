@@ -105,21 +105,42 @@ class AppConfig {
   // 5. ИДЕНТИФИКАТОРЫ АГЕНТОВ
   // ============================================================
 
-  /// ID агента для RAG-сценария.
+  /// ID агента для **управления RAG-наборами**.
   ///
-  /// **Важно:** это **не** `rag/<uuid>`. Это **id агента** в реестре
-  /// мастера — тот же самый для **всех** RAG-наборов. Набор задаётся
-  /// отдельно через поле `model` в теле запроса (`rag/<uuid набора>`).
+  /// **Отдельный от** [ragChatAgentId]. В реестре мастера есть **два**
+  /// RAG-агента:
+  /// - `rag_ingestion` — **управление** наборами (создать, удалить,
+  ///   загрузить документы, иконка). Порт `8011`.
+  /// - `agentic_rag` — **диалог** по готовому набору. Порт `8020`.
   ///
-  /// Используется в путях:
+  /// Используется в путях `RagApi`:
+  /// - `POST /agents/rag_ingestion/v1/platform/rags` — создать набор;
+  /// - `GET  /agents/rag_ingestion/v1/platform/rags` — список;
+  /// - `POST /agents/rag_ingestion/v1/platform/rags/{id}/documents` —
+  ///   загрузить документы;
+  /// - `PUT  /agents/rag_ingestion/v1/platform/rags/{id}/icon` —
+  ///   загрузить иконку;
+  /// - и так далее.
+  ///
+  /// **Почему константа:** это «магическая строка», совпадающая с
+  /// реестром мастера. Если бэкендер переименует агента — поменяем
+  /// здесь **одно** место.
+  static const String ragIngestionAgentId = 'rag_ingestion';
+
+  /// ID агента для **диалога с RAG-набором**.
+  ///
+  /// **Отдельный от** [ragIngestionAgentId]. Используется в путях,
+  /// связанных с **чатом** по готовому набору:
   /// - `POST /agents/agentic_rag/v1/platform/conversations` — создать чат;
   /// - `GET  /agents/agentic_rag/v1/chat/completions/{id}/sources`;
   /// - `POST /agents/agentic_rag/v1/chat/completions/{id}/feedback`.
   ///
-  /// **Почему константа:** это «магическая строка», которая должна
-  /// совпадать с реестром мастера. Если бэкендер переименует агента —
-  /// поменяем здесь **одно** место.
-  static const String ragAgentId = 'agentic_rag';
+  /// **Важно:** в `POST /v1/responses` **agent_id** в URL **не**
+  /// используется — там всё решает поле `model: "rag/<uuid>"`
+  /// (мастер сам роутит на `agentic_rag`). Этот `agent_id` нужен
+  /// **только** для платформенных эндпойнтов (conversations,
+  /// feedback, sources).
+  static const String ragChatAgentId = 'agentic_rag';
 
   /// Префикс для поля `model` в теле `POST /v1/responses` для RAG.
   ///
