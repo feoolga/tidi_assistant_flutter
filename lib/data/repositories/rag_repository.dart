@@ -2,6 +2,7 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -414,7 +415,116 @@ class RagRepository {
   }
 
   // ============================================================
-  // 5. ПРИВАТНЫЕ ХЕЛПЕРЫ — ПАРСИНГ
+  // 5. ИКОНКА НАБОРА
+  // ============================================================
+
+  /// Загрузить иконку RAG-набора (multipart, `PUT`).
+  ///
+  /// **Успех:** `200` или `204` — иконка принята.
+  ///
+  /// **Ошибочные статусы:**
+  /// - `413` → [RagException.iconTooLarge] — иконка слишком большая
+  ///   (лимит бэкенда — 512 КБ).
+  /// - `415` → [RagException.iconUnsupportedFormat] — формат
+  ///   не поддерживается (разрешены PNG/JPEG/WebP, **не** SVG).
+  /// - `404` → [RagException.notFound] — набор не найден.
+  /// - прочие → `RagException.createFailed` (через
+  ///   `handleRagCreation`).
+  ///
+  /// **Клиентская валидация — в UI (D8).** Здесь **только** реакция
+  /// на сервер. Пользователь может выбрать любой файл — UI проверит
+  /// размер и формат **до** отправки.
+  ///
+  /// **Про `PUT`.** `RagApi.uploadIcon` использует `AppHttpClient.multipart`
+  /// с `method: 'PUT'` (см. D3.1). Поле формы — `file`.
+  Future<void> uploadIcon({required String ragId, required File file}) async {
+    AppLogger.info('Загрузка иконки для набора $ragId');
+
+    try {
+      final response = await _api.uploadIcon(ragId: ragId, file: file);
+
+      switch (response.statusCode) {
+        case 200:
+        case 204:
+          AppLogger.info('Иконка загружена для набора $ragId');
+          return;
+        case 404:
+          throw RagException.notFound(ragId);
+        case 413:
+          AppLogger.warning('Иконка слишком большая (413)');
+          // Размер не запрашиваем: файл мог быть удалён к моменту
+          // обработки ошибки, а сервер уже сказал «413» — этого
+          // достаточно для сообщения. `sizeBytes: null` — фабрика
+          // сформирует сообщение без точных цифр.
+          throw RagException.iconTooLarge(
+            maxBytes: AppConfig.ragIconMaxSizeBytes,
+          );
+        case 415:
+          AppLogger.warning('Неподдерживаемый формат иконки (415)');
+          throw RagException.iconUnsupportedFormat(mimeType: 'unknown');
+        default:
+          throw HttpErrorBuilder.fromResponse(response);
+      }
+    } on RagException {
+      rethrow;
+    } catch (e, stackTrace) {
+      throw ErrorHandler.handleRagCreation(
+        e,
+        stackTrace,
+        'Не удалось загрузить иконку набора',
+        {'ragId': ragId},
+      );
+    }
+  }
+
+  /// Получить иконку RAG-набора — **байты** PNG.
+  ///
+  /// **Успех:** `200` → `Uint8List` (байты картинки).
+  ///
+  /// **Ошибочные статусы:**
+  /// - `404` → [RagException.notFound] — иконки нет **или** набор
+  ///   не найден. **Не различаем** — оба «не найдено».
+  /// - прочие → `RagException.createFailed`.
+  ///
+  /// **Почему `Uint8List`, а не `String`.** Иконка — **бинарные
+  /// данные** (PNG). `response.body` декодировал бы их в строку
+  /// (сломал бы). `response.bodyBytes` — **сырые** байты.
+  ///
+  /// **Что делает UI:** `Image.memory(bytes)` или
+  /// `MemoryImage(bytes)`. Задача репозитория — **только** вернуть
+  /// байты.
+  ///
+  /// **Формат ответа.** Скорее всего `image/png` — бэкендер
+  /// переупаковывает в PNG фиксированного размера. Мы **не**
+  /// проверяем `content-type` — просто возвращаем байты.
+  Future<Uint8List> getIcon({required String ragId}) async {
+    AppLogger.debug('Загрузка иконки набора $ragId');
+
+    try {
+      final response = await _api.getIcon(ragId: ragId);
+
+      switch (response.statusCode) {
+        case 200:
+          return response.bodyBytes;
+        case 404:
+          throw RagException.notFound(ragId);
+        default:
+          throw HttpErrorBuilder.fromResponse(response);
+      }
+    } on RagException {
+      rethrow;
+    } catch (e, stackTrace) {
+      throw ErrorHandler.handleRagCreation(
+        e,
+        stackTrace,
+        'Не удалось загрузить иконку набора',
+        {'ragId': ragId},
+      );
+    }
+  }
+
+  // ============================================================
+  // 6. ПРИВАТНЫЕ ХЕЛПЕРЫ — ПАРСИНГ
   // ============================================================
 
   RagSet _parseSingleSet(String body) {

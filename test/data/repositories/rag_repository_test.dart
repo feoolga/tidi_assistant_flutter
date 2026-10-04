@@ -70,6 +70,33 @@ class FakeRagApi extends RagApi {
     return deleteDocumentResponse!;
   }
 
+  // ---- Иконка ----
+  http.Response? uploadIconResponse;
+  http.Response? getIconResponse;
+
+  Object? uploadIconError;
+  Object? getIconError;
+
+  String? lastUploadIconRagId;
+  String? lastGetIconRagId;
+
+  @override
+  Future<http.Response> uploadIcon({
+    required String ragId,
+    required File file,
+  }) async {
+    lastUploadIconRagId = ragId;
+    if (uploadIconError != null) throw uploadIconError!;
+    return uploadIconResponse!;
+  }
+
+  @override
+  Future<http.Response> getIcon({required String ragId}) async {
+    lastGetIconRagId = ragId;
+    if (getIconError != null) throw getIconError!;
+    return getIconResponse!;
+  }
+
   // ---- Настройки ответов ----
   http.Response? createResponse;
   http.Response? listResponse;
@@ -155,6 +182,19 @@ http.Response jsonResponse(String body, int statusCode) {
     statusCode,
     headers: const {'content-type': 'application/json; charset=utf-8'},
   );
+}
+
+/// Создать `http.Response` с **бинарным** телом (например, PNG).
+///
+/// **Зачем helper.** `http.Response(...)` принимает `body` —
+/// либо строку (тогда `charset` по умолчанию Latin1 — упадёт
+/// на кириллице), либо `List<int>` (тогда — **байты как есть**).
+///
+/// **Почему `List<int>`, а не `Uint8List`.** `http.Response`
+/// принимает `List<int>` в `body`. `Uint8List` — это тоже
+/// `List<int>` (наследник), работает **без** приведения.
+http.Response binaryResponse(List<int> bytes, int statusCode) {
+  return http.Response.bytes(bytes, statusCode);
 }
 
 /// Собрать JSON-объект набора **как Map** — для вставки в ответы.
@@ -708,6 +748,139 @@ void main() {
           isA<RagException>().having((e) => e.code, 'code', 'RAG_NOT_FOUND'),
         ),
       );
+    });
+    group('RagRepository.uploadIcon', () {
+      test('200 → успешно', () async {
+        final api = FakeRagApi()..uploadIconResponse = jsonResponse('{}', 200);
+        final repo = RagRepository(api: api);
+
+        await repo.uploadIcon(ragId: 'rag-1', file: File('/tmp/icon.png'));
+
+        expect(api.lastUploadIconRagId, 'rag-1');
+      });
+
+      test('204 → успешно', () async {
+        final api = FakeRagApi()..uploadIconResponse = jsonResponse('', 204);
+        final repo = RagRepository(api: api);
+
+        await repo.uploadIcon(ragId: 'rag-1', file: File('/tmp/icon.png'));
+
+        expect(api.lastUploadIconRagId, 'rag-1');
+      });
+
+      test('404 → RagException.notFound', () async {
+        final api = FakeRagApi()
+          ..uploadIconResponse = jsonResponse('{"error": {}}', 404);
+        final repo = RagRepository(api: api);
+
+        expect(
+          () => repo.uploadIcon(ragId: 'rag-1', file: File('/tmp/icon.png')),
+          throwsA(
+            isA<RagException>().having((e) => e.code, 'code', 'RAG_NOT_FOUND'),
+          ),
+        );
+      });
+
+      test('413 → RagException.iconTooLarge', () async {
+        final api = FakeRagApi()
+          ..uploadIconResponse = jsonResponse(
+            '{"error": {"message": "too large"}}',
+            413,
+          );
+        final repo = RagRepository(api: api);
+
+        expect(
+          () => repo.uploadIcon(ragId: 'rag-1', file: File('/tmp/icon.png')),
+          throwsA(
+            isA<RagException>().having(
+              (e) => e.code,
+              'code',
+              'RAG_ICON_TOO_LARGE',
+            ),
+          ),
+        );
+      });
+
+      test('415 → RagException.iconUnsupportedFormat', () async {
+        final api = FakeRagApi()
+          ..uploadIconResponse = jsonResponse(
+            '{"error": {"message": "unsupported"}}',
+            415,
+          );
+        final repo = RagRepository(api: api);
+
+        expect(
+          () => repo.uploadIcon(ragId: 'rag-1', file: File('/tmp/icon.svg')),
+          throwsA(
+            isA<RagException>().having(
+              (e) => e.code,
+              'code',
+              'RAG_ICON_UNSUPPORTED_FORMAT',
+            ),
+          ),
+        );
+      });
+
+      test('транспортная ошибка → RagException.createFailed', () async {
+        final api = FakeRagApi()
+          ..uploadIconError = NetworkException.connectionError();
+        final repo = RagRepository(api: api);
+
+        expect(
+          () => repo.uploadIcon(ragId: 'rag-1', file: File('/tmp/icon.png')),
+          throwsA(
+            isA<RagException>().having(
+              (e) => e.code,
+              'code',
+              'RAG_CREATE_FAILED',
+            ),
+          ),
+        );
+      });
+    });
+
+    group('RagRepository.getIcon', () {
+      test('200 → возвращает байты', () async {
+        // Простой фейковый PNG: несколько байтов.
+        final bytes = <int>[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A];
+        final api = FakeRagApi()..getIconResponse = binaryResponse(bytes, 200);
+        final repo = RagRepository(api: api);
+
+        final result = await repo.getIcon(ragId: 'rag-1');
+
+        expect(result, bytes);
+        expect(api.lastGetIconRagId, 'rag-1');
+      });
+
+      test('404 → RagException.notFound', () async {
+        final api = FakeRagApi()
+          ..getIconResponse = jsonResponse('{"error": {}}', 404);
+        final repo = RagRepository(api: api);
+
+        expect(
+          () => repo.getIcon(ragId: 'rag-1'),
+          throwsA(
+            isA<RagException>().having((e) => e.code, 'code', 'RAG_NOT_FOUND'),
+          ),
+        );
+      });
+
+      test('500 → RagException.createFailed', () async {
+        final api = FakeRagApi()
+          ..getIconResponse = jsonResponse('{"error": {}}', 500);
+        final repo = RagRepository(api: api);
+
+        expect(
+          () => repo.getIcon(ragId: 'rag-1'),
+          throwsA(
+            isA<RagException>().having(
+              (e) => e.code,
+              'code',
+              'RAG_CREATE_FAILED',
+            ),
+          ),
+        );
+      });
     });
   });
 }

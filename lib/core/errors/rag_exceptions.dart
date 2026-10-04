@@ -298,17 +298,27 @@ class RagException extends AppException {
   ///
   /// Лимит берётся из настроек ingestion-сервиса, но клиент проверяет
   /// его **до** отправки, чтобы не гонять зря большой файл.
-  factory RagException.iconTooLarge({
-    required int sizeBytes,
-    required int maxBytes,
-  }) {
-    final sizeKb = (sizeBytes / 1024).toStringAsFixed(0);
+  factory RagException.iconTooLarge({int? sizeBytes, required int maxBytes}) {
     final maxKb = (maxBytes / 1024).toStringAsFixed(0);
+
+    // Если размер известен — показываем точные цифры.
+    // Если нет (файл недоступен, или сервер не прислал) —
+    // общее сообщение с максимумом.
+    final String userMessage;
+    if (sizeBytes != null) {
+      final sizeKb = (sizeBytes / 1024).toStringAsFixed(0);
+      userMessage =
+          'Иконка слишком большая ($sizeKb КБ). Максимум — $maxKb КБ.';
+    } else {
+      userMessage = 'Иконка слишком большая. Максимум — $maxKb КБ.';
+    }
 
     return RagException(
       code: 'RAG_ICON_TOO_LARGE',
-      userMessage: 'Иконка слишком большая ($sizeKb КБ). Максимум — $maxKb КБ.',
-      technicalDetails: 'Icon size: $sizeBytes bytes, max: $maxBytes bytes',
+      userMessage: userMessage,
+      technicalDetails: sizeBytes != null
+          ? 'Icon size: $sizeBytes bytes, max: $maxBytes bytes'
+          : 'Icon size unknown, max: $maxBytes bytes',
     );
   }
 
