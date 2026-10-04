@@ -34,7 +34,7 @@ class AttachmentMapper {
   }) {
     // 1. Определяем MIME по имени файла.
     //    В ответе сервера MIME-тип не приходит — только filename.
-    final mimeType = attachmentMimeTypeFromFilename(dto.filename);
+    final mimeType = mimeTypeFromFilename(dto.filename);
 
     // 2. Определяем доменный статус — из processing_status,
     //    а НЕ из status. См. README бэкендера: status — сведённое

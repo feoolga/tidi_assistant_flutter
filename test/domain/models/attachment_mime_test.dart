@@ -5,83 +5,123 @@ import 'package:tidi_assistant_flutter/domain/models/attachment.dart';
 
 void main() {
   // ============================================================
-  // РАЗРЕШЁННЫЕ ФОРМАТЫ
+  // PDF
   // ============================================================
 
-  group('разрешённые форматы', () {
+  group('PDF', () {
     test('.pdf → application/pdf', () {
+      expect(mimeTypeFromFilename('накладная.pdf'), 'application/pdf');
+    });
+
+    test('.PDF (верхний регистр) → application/pdf', () {
+      expect(mimeTypeFromFilename('ДОГОВОР.PDF'), 'application/pdf');
+    });
+
+    test('.Pdf (смешанный) → application/pdf', () {
+      expect(mimeTypeFromFilename('Договор.Pdf'), 'application/pdf');
+    });
+  });
+
+  // ============================================================
+  // WORD
+  // ============================================================
+
+  group('Word', () {
+    test('.docx → wordprocessingml.document', () {
       expect(
-        attachmentMimeTypeFromFilename('накладная.pdf'),
-        'application/pdf',
+        mimeTypeFromFilename('приказ.docx'),
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       );
     });
 
+    test('.doc → application/msword', () {
+      expect(mimeTypeFromFilename('старый.doc'), 'application/msword');
+    });
+
+    test('.DOCX (верхний регистр) → wordprocessingml.document', () {
+      expect(
+        mimeTypeFromFilename('ПРИКАЗ.DOCX'),
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      );
+    });
+
+    test('.DOC (верхний регистр) → application/msword', () {
+      expect(mimeTypeFromFilename('СТАРЫЙ.DOC'), 'application/msword');
+    });
+  });
+
+  // ============================================================
+  // ТЕКСТОВЫЕ
+  // ============================================================
+
+  group('текстовые', () {
+    test('.txt → text/plain', () {
+      expect(mimeTypeFromFilename('заметка.txt'), 'text/plain');
+    });
+
+    test('.md → text/markdown', () {
+      expect(mimeTypeFromFilename('README.md'), 'text/markdown');
+    });
+
+    test('.TXT (верхний регистр) → text/plain', () {
+      expect(mimeTypeFromFilename('ЗАМЕТКА.TXT'), 'text/plain');
+    });
+
+    test('.MD (верхний регистр) → text/markdown', () {
+      expect(mimeTypeFromFilename('README.MD'), 'text/markdown');
+    });
+  });
+
+  // ============================================================
+  // КАРТИНКИ
+  // ============================================================
+
+  group('картинки', () {
     test('.jpg → image/jpeg', () {
-      expect(attachmentMimeTypeFromFilename('photo.jpg'), 'image/jpeg');
+      expect(mimeTypeFromFilename('photo.jpg'), 'image/jpeg');
     });
 
     test('.jpeg → image/jpeg', () {
-      expect(attachmentMimeTypeFromFilename('photo.jpeg'), 'image/jpeg');
+      expect(mimeTypeFromFilename('photo.jpeg'), 'image/jpeg');
     });
 
     test('.png → image/png', () {
-      expect(attachmentMimeTypeFromFilename('screen.png'), 'image/png');
-    });
-  });
-
-  // ============================================================
-  // РЕГИСТР
-  // ============================================================
-
-  group('регистр не важен', () {
-    test('.PDF → application/pdf', () {
-      expect(attachmentMimeTypeFromFilename('ДОГОВОР.PDF'), 'application/pdf');
+      expect(mimeTypeFromFilename('screen.png'), 'image/png');
     });
 
-    test('.JPG → image/jpeg', () {
-      expect(attachmentMimeTypeFromFilename('PHOTO.JPG'), 'image/jpeg');
+    test('.JPG (верхний регистр) → image/jpeg', () {
+      expect(mimeTypeFromFilename('PHOTO.JPG'), 'image/jpeg');
     });
 
     test('.Png (смешанный) → image/png', () {
-      expect(attachmentMimeTypeFromFilename('Screen.Png'), 'image/png');
+      expect(mimeTypeFromFilename('Screen.Png'), 'image/png');
     });
   });
 
   // ============================================================
-  // НЕИЗВЕСТНЫЕ ФОРМАТЫ
+  // НЕИЗВЕСТНЫЕ / НЕ РАЗРЕШЁННЫЕ
   // ============================================================
 
   group('неизвестные форматы', () {
-    test('.docx → application/octet-stream', () {
-      expect(
-        attachmentMimeTypeFromFilename('document.docx'),
-        'application/octet-stream',
-      );
+    test('.webp → application/octet-stream', () {
+      // В нашем списке MIME webp нет — это для иконок.
+      expect(mimeTypeFromFilename('image.webp'), 'application/octet-stream');
     });
 
-    test('.txt → application/octet-stream', () {
-      expect(
-        attachmentMimeTypeFromFilename('notes.txt'),
-        'application/octet-stream',
-      );
+    test('.svg → application/octet-stream', () {
+      expect(mimeTypeFromFilename('icon.svg'), 'application/octet-stream');
     });
 
-    test('.webp (пока не разрешён) → application/octet-stream', () {
-      expect(
-        attachmentMimeTypeFromFilename('image.webp'),
-        'application/octet-stream',
-      );
+    test('.zip → application/octet-stream', () {
+      expect(mimeTypeFromFilename('archive.zip'), 'application/octet-stream');
     });
 
     test('без расширения → application/octet-stream', () {
-      expect(
-        attachmentMimeTypeFromFilename('README'),
-        'application/octet-stream',
-      );
+      expect(mimeTypeFromFilename('README'), 'application/octet-stream');
     });
 
     test('пустая строка → application/octet-stream', () {
-      expect(attachmentMimeTypeFromFilename(''), 'application/octet-stream');
+      expect(mimeTypeFromFilename(''), 'application/octet-stream');
     });
   });
 
@@ -91,37 +131,35 @@ void main() {
 
   group('хитрые случаи', () {
     test('точка в имени, но расширение не наше → octet-stream', () {
-      // .gz — не наше расширение, хотя имя длинное
+      // `.gz` — не наше расширение, хотя имя длинное.
       expect(
-        attachmentMimeTypeFromFilename('archive.tar.gz'),
+        mimeTypeFromFilename('archive.tar.gz'),
         'application/octet-stream',
       );
     });
 
     test('несколько точек, последняя — наша → правильный MIME', () {
-      // Смотрим только на последнее расширение
-      expect(
-        attachmentMimeTypeFromFilename('договор.2026.pdf'),
-        'application/pdf',
-      );
+      // Смотрим только на **последнее** расширение.
+      expect(mimeTypeFromFilename('договор.2026.pdf'), 'application/pdf');
     });
 
     test('пробелы в имени не мешают', () {
-      expect(
-        attachmentMimeTypeFromFilename('мой договор.pdf'),
-        'application/pdf',
-      );
+      expect(mimeTypeFromFilename('мой договор.pdf'), 'application/pdf');
     });
 
     test('кириллица в имени не мешает', () {
-      expect(
-        attachmentMimeTypeFromFilename('накладная №1.pdf'),
-        'application/pdf',
-      );
+      expect(mimeTypeFromFilename('накладная №1.pdf'), 'application/pdf');
     });
 
     test('путь в имени — берём только расширение', () {
-      expect(attachmentMimeTypeFromFilename('/tmp/photo.jpg'), 'image/jpeg');
+      expect(mimeTypeFromFilename('/tmp/photo.jpg'), 'image/jpeg');
+    });
+
+    test('Windows-путь в имени — берём только расширение', () {
+      expect(
+        mimeTypeFromFilename(r'C:\Users\test\file.docx'),
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      );
     });
   });
 }

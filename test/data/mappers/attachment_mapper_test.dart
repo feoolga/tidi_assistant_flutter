@@ -77,8 +77,33 @@ void main() {
     });
 
     test('неизвестное расширение → application/octet-stream', () {
-      final att = mapDto(makeDto(filename: 'document.docx'));
+      // `.xyz` — точно не в списке разрешённых. `.docx` теперь известен,
+      // поэтому использовать его как «неизвестное» нельзя.
+      final att = mapDto(makeDto(filename: 'документ.xyz'));
       expect(att.mimeType, 'application/octet-stream');
+    });
+
+    test('.docx → wordprocessingml.document', () {
+      final att = mapDto(makeDto(filename: 'приказ.docx'));
+      expect(
+        att.mimeType,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      );
+    });
+
+    test('.doc → application/msword', () {
+      final att = mapDto(makeDto(filename: 'старый.doc'));
+      expect(att.mimeType, 'application/msword');
+    });
+
+    test('.txt → text/plain', () {
+      final att = mapDto(makeDto(filename: 'заметка.txt'));
+      expect(att.mimeType, 'text/plain');
+    });
+
+    test('.md → text/markdown', () {
+      final att = mapDto(makeDto(filename: 'README.md'));
+      expect(att.mimeType, 'text/markdown');
     });
 
     test('расширение в верхнем регистре тоже работает', () {
@@ -104,7 +129,8 @@ void main() {
     });
 
     test('неизвестный MIME → AttachmentKind.other', () {
-      final att = mapDto(makeDto(filename: 'file.docx'));
+      // `.xyz` — точно не в списке, MIME будет octet-stream.
+      final att = mapDto(makeDto(filename: 'file.xyz'));
       expect(att.kind, AttachmentKind.other);
     });
   });

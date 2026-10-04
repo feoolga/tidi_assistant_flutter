@@ -186,26 +186,64 @@ class Attachment {
 
 /// Определить MIME-тип по имени файла.
 ///
+/// **Единая функция для всех сценариев** (`document_chat` и RAG) —
+/// бэкендер принимает **одинаковый** набор форматов в обоих случаях.
+/// Раньше было **две** функции (`attachmentMimeTypeFromFilename` и
+/// `ragMimeTypeFromFilename`), теперь — **одна**.
+///
 /// Публичная функция (не метод класса), потому что используется:
 /// - в `AttachmentMapper` — при переводе ответа сервера в домен;
-/// - в `ChatNotifier.addAttachment` — при валидации локального файла
-///   до загрузки (по `AppConfig.documentChatAllowedMimeTypes`).
+/// - в `AttachmentDraftNotifier.addAttachment` — при валидации
+///   локального файла до загрузки;
+/// - в `CreateRagUseCase._validateFile` — то же для RAG.
 ///
-/// Смотрим только на расширение: файл либо уже на сервере (маппер),
-/// либо только что выбран пользователем (валидация). Оба раза расширение
-/// — единственный доступный источник информации о типе.
+/// **Смотрим только на расширение.** Файл либо уже на сервере
+/// (маппер), либо только что выбран пользователем (валидация).
+/// В обоих случаях расширение — единственный доступный источник
+/// информации о типе.
 ///
-/// Если расширение неизвестно — возвращаем `application/octet-stream`.
-/// Валидация по `AppConfig.documentChatAllowedMimeTypes` отсеет такие файлы
-/// до загрузки, так что до сервера они не дойдут.
-String attachmentMimeTypeFromFilename(String filename) {
+/// **Поддерживаемые форматы** (см. `AppConfig.allowedFileExtensions`):
+/// - `pdf` → `application/pdf`
+/// - `docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+/// - `doc` → `application/msword`
+/// - `txt` → `text/plain`
+/// - `md` → `text/markdown`
+/// - `jpg` / `jpeg` → `image/jpeg`
+/// - `png` → `image/png`
+///
+/// **Неизвестное расширение** → `application/octet-stream`. Валидация
+/// по `AppConfig.allowedMimeTypes` **отсеет** такие файлы **до**
+/// отправки.
+///
+/// Пример:
+/// ```dart
+/// mimeTypeFromFilename('договор.pdf')    // → 'application/pdf'
+/// mimeTypeFromFilename('приказ.docx')    // → 'application/vnd...wordprocessingml.document'
+/// mimeTypeFromFilename('note.txt')        // → 'text/plain'
+/// mimeTypeFromFilename('file.xyz')        // → 'application/octet-stream'
+/// ```
+String mimeTypeFromFilename(String filename) {
   final lower = filename.toLowerCase();
 
+  // PDF
   if (lower.endsWith('.pdf')) return 'application/pdf';
+
+  // Word
+  if (lower.endsWith('.docx')) {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (lower.endsWith('.doc')) return 'application/msword';
+
+  // Текстовые
+  if (lower.endsWith('.txt')) return 'text/plain';
+  if (lower.endsWith('.md')) return 'text/markdown';
+
+  // Картинки
   if (lower.endsWith('.jpg')) return 'image/jpeg';
   if (lower.endsWith('.jpeg')) return 'image/jpeg';
   if (lower.endsWith('.png')) return 'image/png';
 
+  // Неизвестное — отсеется валидацией.
   return 'application/octet-stream';
 }
 

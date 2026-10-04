@@ -156,41 +156,62 @@ class AppConfig {
   /// использует 1, поменяем здесь одно число.
   static const int documentChatMaxAttachedFiles = 5;
 
-  /// Разрешённые MIME-типы для загрузки в `document_chat`.
+  // ============================================================
+  // 7. РАЗРЕШЁННЫЕ ФОРМАТЫ ФАЙЛОВ (общие для document_chat и RAG)
+  // ============================================================
+
+  /// Разрешённые MIME-типы — **общие** для **всех** сценариев
+  /// (`document_chat` и RAG).
   ///
-  /// Используем для клиентской валидации и для отображения корректного
-  /// типа в UI (иконка PDF / превью картинки).
+  /// **Почему один список на всё.** Бэкендер принимает **одинаковый**
+  /// набор форматов и в `document_chat`, и в RAG. Разделять —
+  /// значит плодить дублирование без пользы.
   ///
-  /// **ВАЖНО:** MIME не всегда приходит из `file_picker` корректно —
-  /// иногда там `application/octet-stream`. Поэтому есть ещё список
-  /// расширений ниже, и валидация идёт по обоим.
-  static const Set<String> documentChatAllowedMimeTypes = {
+  /// **Актуальный список** от бэкендера:
+  /// PDF, DOCX, DOC, TXT, MD, JPG, PNG.
+  ///
+  /// **Про `application/octet-stream`.** `file_picker` иногда
+  /// возвращает его для неизвестных расширений — этот MIME **не**
+  /// в списке, файл будет **отсеян** валидацией.
+  static const Set<String> allowedMimeTypes = {
     // PDF
     'application/pdf',
-    // Изображения (то, что реально поддерживает Android-галерея)
+    // Word
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+    'application/msword', // .doc (старый формат)
+    // Plain text
+    'text/plain',
+    // Markdown
+    'text/markdown',
+    'text/x-markdown',
+    // Картинки (для документов со сканами)
     'image/jpeg',
     'image/jpg',
     'image/png',
   };
 
-  /// Разрешённые расширения файлов для `document_chat`.
+  /// Разрешённые расширения — **общие**. Для `file_picker`.
   ///
-  /// Нужны для `file_picker` — он фильтрует по расширениям, а не по MIME.
-  /// Держим синхронно с `documentChatAllowedMimeTypes`: если добавили
-  /// MIME — добавьте и расширение, и наоборот.
-  static const List<String> documentChatAllowedFileExtensions = [
+  /// Держим синхронно с [allowedMimeTypes]: если добавили MIME —
+  /// добавьте и расширение, и наоборот.
+  static const List<String> allowedFileExtensions = [
     'pdf',
+    'docx',
+    'doc',
+    'txt',
+    'md',
     'jpg',
     'jpeg',
     'png',
   ];
 
-  /// Человекочитаемое описание разрешённых форматов `document_chat` —
-  /// для сообщений об ошибке.
-  static const String documentChatAllowedFormatsDescription = 'PDF, JPG, PNG';
+  /// Человекочитаемое описание разрешённых форматов — для сообщений
+  /// об ошибке и подсказок в UI.
+  static const String allowedFormatsDescription =
+      'PDF, DOCX, TXT, MD, JPG, PNG';
 
   // ============================================================
-  // 7. ЛИМИТЫ СЦЕНАРИЯ RAG
+  // 8. ЛИМИТЫ СЦЕНАРИЯ RAG
   // ============================================================
 
   // ---- 7.1. РАЗМЕРЫ И КОЛИЧЕСТВА ----
@@ -248,52 +269,7 @@ class AppConfig {
   /// Если бэкенд добавит ограничение — поменяем здесь.
   static const int ragMaxDescriptionLength = 2000;
 
-  // ---- 7.2. ФОРМАТЫ ФАЙЛОВ ----
-
-  /// Разрешённые MIME-типы для RAG-документов.
-  ///
-  /// **Отличается** от `documentChatAllowedMimeTypes`: RAG принимает
-  /// текстовые форматы и DOCX, потому что использует docling для
-  /// парсинга (а не MinerU для OCR-сканов).
-  ///
-  /// **Расширяемо:** если бэкенд добавит новые форматы — правка здесь.
-  /// Актуальный список всегда в README ingestion-сервиса.
-  static const Set<String> ragAllowedMimeTypes = {
-    // PDF
-    'application/pdf',
-    // Word
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-    'application/msword', // .doc (старый формат)
-    // Plain text
-    'text/plain',
-    // Markdown
-    'text/markdown',
-    'text/x-markdown',
-    // Картинки (для документов со сканами)
-    'image/jpeg',
-    'image/jpg',
-    'image/png',
-  };
-
-  /// Разрешённые расширения для `file_picker`.
-  ///
-  /// Держим синхронно с `ragAllowedMimeTypes`.
-  static const List<String> ragAllowedFileExtensions = [
-    'pdf',
-    'docx',
-    'doc',
-    'txt',
-    'md',
-    'jpg',
-    'jpeg',
-    'png',
-  ];
-
-  /// Человекочитаемое описание разрешённых форматов RAG.
-  static const String ragAllowedFormatsDescription =
-      'PDF, DOCX, TXT, MD, JPG, PNG';
-
-  // ---- 7.3. ОПРОС СТАТУСА (POLLING) ----
+  // ---- 7.2. ОПРОС СТАТУСА (POLLING) ----
 
   /// Интервал опроса статуса RAG-набора.
   ///
@@ -312,7 +288,7 @@ class AppConfig {
   /// сервере что-то сломалось и `status` не меняется.
   static const Duration ragPollTimeout = Duration(minutes: 30);
 
-  // ---- 7.4. ИКОНКА НАБОРА ----
+  // ---- 7.3. ИКОНКА НАБОРА ----
 
   /// Максимальный размер иконки RAG-набора.
   ///

@@ -6,8 +6,8 @@ import '../../core/config/app_config.dart';
 import '../../core/errors/rag_exceptions.dart';
 import '../../core/logger/app_logger.dart';
 import '../../data/repositories/rag_repository.dart';
+import '../models/attachment.dart';
 import '../models/rag_set.dart';
-import '../utils/rag_file_utils.dart';
 
 /// UseCase создания RAG-набора с загрузкой файлов.
 ///
@@ -157,8 +157,8 @@ class CreateRagUseCase {
     }
 
     // MIME.
-    final mimeType = ragMimeTypeFromFilename(fileName);
-    if (!isRagAllowedMimeType(mimeType)) {
+    final mimeType = mimeTypeFromFilename(fileName);
+    if (!AppConfig.allowedMimeTypes.contains(mimeType)) {
       throw RagException.unsupportedFormat(mimeType: mimeType);
     }
   }

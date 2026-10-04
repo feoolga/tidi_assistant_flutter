@@ -35,7 +35,7 @@ class AttachmentPickerHelper {
         // не поддерживает фильтр — пользователь всё равно увидит
         // все файлы, а валидация MIME/размера произойдёт в addAttachment.
         type: FileType.custom,
-        allowedExtensions: AppConfig.documentChatAllowedFileExtensions,
+        allowedExtensions: AppConfig.allowedFileExtensions,
 
         // Не даём выбирать папки — только файлы.
         // (file_picker всё равно вернёт только файлы, но так явнее.)

@@ -229,8 +229,8 @@ class AttachmentDraftNotifier extends StateNotifier<AttachmentDraftState> {
         );
       }
 
-      final mimeType = attachmentMimeTypeFromFilename(fileName);
-      if (!AppConfig.documentChatAllowedMimeTypes.contains(mimeType)) {
+      final mimeType = mimeTypeFromFilename(fileName);
+      if (!AppConfig.allowedMimeTypes.contains(mimeType)) {
         throw FileException.unsupportedFormat(mimeType: mimeType);
       }
 
