@@ -132,10 +132,26 @@ class SendMessageUseCase {
       await for (final event in eventStream) {
         final eventType = event['_event_type'] as String?;
 
-        // --- Служебные события начала — игнорируем ---
+        // --- Служебные события — молча пропускаем ---
+        //
+        // Это события, которые **не несут** полезной нагрузки для нашей логики:
+        // мы знаем о них, знаем, что они приходят, и **не** хотим их логировать,
+        // чтобы не засорять лог. По OpenAI Responses API их порядок такой:
+        // response.created → response.in_progress → response.output_item.added
+        // → response.content_part.added → ... delta ... → response.output_text.done
+        // → response.content_part.done → response.output_item.done
+        // → response.completed.
+        //
+        // Раньше `response.in_progress` **не** был в списке — он попадал в
+        // финальный `AppLogger.debug('Пропущено SSE-событие: ...')` и создавал
+        // шум в логах.
         if (eventType == 'response.created' ||
+            eventType == 'response.in_progress' ||
             eventType == 'response.output_item.added' ||
-            eventType == 'response.content_part.added') {
+            eventType == 'response.content_part.added' ||
+            eventType == 'response.output_text.done' ||
+            eventType == 'response.content_part.done' ||
+            eventType == 'response.output_item.done') {
           continue;
         }
 
@@ -157,23 +173,84 @@ class SendMessageUseCase {
         }
 
         // --- Финал — эмитим финальный DTO и закрываем поток ---
+        //
+        // Событие `response.completed` приходит в **двух** форматах:
+        //
+        // **Формат A — канонический OpenAI Responses API:**
+        // ```json
+        // {
+        //   "type": "response.completed",
+        //   "response": {
+        //     "id": "resp_<uuid>",
+        //     "status": "completed",
+        //     "model": "epoz",
+        //     "conversation_id": "...",
+        //     "usage": {...}
+        //   }
+        // }
+        // ```
+        // Здесь `id`, `model`, `conversation_id` лежат **внутри** вложенного
+        // объекта `response`.
+        //
+        // **Формат B — упрощённый (`agentic_rag` и, возможно, другие RAG-агенты):**
+        // ```json
+        // {
+        //   "id": "resp_<uuid>",
+        //   "status": "completed",
+        //   "model": "rag/<rag_uuid>",
+        //   "usage": {...}
+        // }
+        // ```
+        // Здесь те же поля лежат **на верхнем уровне** — бекендер "сплющил"
+        // объект `response`.
+        //
+        // **Почему проверяем именно так.** Сначала пробуем **вложенный** формат
+        // (канонический): если он есть — используем его. Только если вложенного
+        // нет — переключаемся на плоский. Это **безопаснее**: если в стандартном
+        // событии случайно окажется **одноимённое** поле на верхнем уровне
+        // (например, служебный `event_id`), мы его **не** примем за настоящий `id`.
         if (eventType == 'response.completed') {
+          // 1. Пытаемся прочитать вложенный объект `response`.
           final responseData = event['response'] as Map<String, dynamic>?;
-          if (responseData != null) {
-            final messageId = responseData['id'] as String?;
-            final agentId = responseData['model'] as String?;
-            final conversationId = responseData['conversation_id'] as String?;
 
-            controller.add(
-              ChatResponseDto(
-                id: messageId ?? '',
-                model: agentId ?? params.agentId ?? 'auto',
-                conversationId: conversationId ?? params.sessionId,
-                content: fullText,
-                isStreaming: false,
-              ),
-            );
+          // 2. Если он есть — берём данные из него. Иначе — читаем
+          //    плоские поля **прямо из корня** события.
+          //
+          //    `final` — потому что эти три переменные **не меняются** после
+          //    вычисления; они лишь выбирают источник. Компилятор это любит.
+          final String? messageId;
+          final String? agentId;
+          final String? conversationId;
+
+          if (responseData != null) {
+            // Формат A: OpenAI-совместимый.
+            messageId = responseData['id'] as String?;
+            agentId = responseData['model'] as String?;
+            conversationId = responseData['conversation_id'] as String?;
+          } else {
+            // Формат B: плоский (`agentic_rag`).
+            messageId = event['id'] as String?;
+            agentId = event['model'] as String?;
+            // `conversation_id` в плоском формате **не приходит** в
+            // `response.completed` — есть только в `response.created`. Поэтому
+            // берём `null` и потом подставляем `params.sessionId` (см. ниже).
+            conversationId = event['conversation_id'] as String?;
           }
+
+          // 3. Всегда эмитим финальный DTO — даже если полей не хватает.
+          //    `content` — точно есть (собран из delta). `messageId` может быть
+          //    `null`, если бекендер совсем странный; в этом случае
+          //    `ChatStreamHandler` получит `ChatStreamCompleted` с `messageId = null`
+          //    — и это нормально, потому что фидбек/sources мы пока не вызываем.
+          controller.add(
+            ChatResponseDto(
+              id: messageId ?? '',
+              model: agentId ?? params.agentId ?? 'auto',
+              conversationId: conversationId ?? params.sessionId,
+              content: fullText,
+              isStreaming: false,
+            ),
+          );
 
           controller.close();
           return;
@@ -209,10 +286,13 @@ class SendMessageUseCase {
           return;
         }
 
-        // --- Всё остальное — логируем, но не ломаем стрим ---
-        // Примеры: response.output_text.done, response.content_part.done,
-        // response.output_item.done — служебные события конца.
-        AppLogger.debug('Пропущено SSE-событие: $eventType');
+        // --- Всё остальное — незнакомое событие ---
+        //
+        // Здесь оказываются события, которых мы **не ожидали**. Их **не
+        // ломаем** стрим — просто логируем на уровне debug, чтобы увидеть
+        // в логах при отладке. Если такие появятся — это сигнал, что бекендер
+        // добавил **новое** событие, и надо решить, обрабатывать ли его.
+        AppLogger.debug('Пропущено незнакомое SSE-событие: $eventType');
       }
 
       // 5. Если поток завершился без response.completed — это нештатно.
