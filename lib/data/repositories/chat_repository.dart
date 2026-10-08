@@ -20,6 +20,7 @@ import '../mappers/message_mapper.dart';
 import '../models/agent_dto.dart';
 import '../models/chat_session_dto.dart';
 import '../models/message_dto.dart';
+import '../../domain/models/message_source.dart';
 
 /// Репозиторий для работы с чатом.
 ///
@@ -323,6 +324,106 @@ class ChatRepository {
         stackTrace,
         'Не удалось загрузить сообщения чата $conversationId',
         {'agentId': agentId, 'conversationId': conversationId},
+      );
+    }
+  }
+
+  /// Получить источники ответа AI — отдельной ручкой.
+  ///
+  /// `GET /agents/{agentId}/v1/chat/completions/{messageId}/sources`
+  ///
+  /// **Зачем отдельный метод.** У `agentic_rag` sources **не** приходят
+  /// в `GET .../messages` — только через эту ручку. У `document_chat`
+  /// sources **уже** в самом сообщении, и этот метод **не** вызывается.
+  ///
+  /// **Формат ответа** (по README Agentic RAG):
+  /// ```json
+  /// {"data": [
+  ///   {"order": 1, "chunk_id": "...", "document_id": "...",
+  ///    "chunk_index": 0, "filename": "file.pdf"}
+  /// ]}
+  /// ```
+  ///
+  /// `messageId` — id **ответа** (`resp_<uuid>`). Ручка `sources`
+  /// принимает любую форму id (`resp_`, `msg_`, `chatcmpl-`, голый UUID) —
+  /// как и `feedback`.
+  ///
+  /// **Ошибки** пробрасываем наверх — вызывающий код (`ChatNotifier`)
+  /// решит, что с ними делать. При ошибке `sendMessage` **не** должен
+  /// падать целиком: ответ уже получен, sources — не критичны.
+  Future<List<MessageSource>> getSources({
+    required String agentId,
+    required String messageId,
+  }) async {
+    try {
+      final response = await _api.getSources(
+        agentId: agentId,
+        completionId: messageId,
+      );
+
+      // Формат ответа — обёртка `{"data": [...]}`. Та же логика, что
+      // в `getMessages`/`getConversations`. Читаем оба варианта —
+      // на случай, если бекендер унифицирует в одну сторону.
+      final decoded = jsonDecode(response.body);
+
+      final List<dynamic> data;
+      if (decoded is List) {
+        data = decoded;
+      } else if (decoded is Map<String, dynamic>) {
+        final inner = decoded['data'];
+        if (inner is! List) {
+          throw FormatException(
+            'Ожидался массив или {"data": [...]}, получено: '
+            '${inner.runtimeType}',
+          );
+        }
+        data = inner;
+      } else {
+        throw FormatException(
+          'Ожидался массив или {"data": [...]}, получено: '
+          '${decoded.runtimeType}',
+        );
+      }
+
+      // Каждый элемент — объект с полями order/chunk_id/.../filename.
+      // Разбираем вручную — DTO не нужен (структура простая).
+      final sources = <MessageSource>[];
+      for (final item in data) {
+        if (item is! Map<String, dynamic>) continue;
+        final filename = item['filename'] as String?;
+        if (filename == null || filename.isEmpty) continue;
+
+        sources.add(
+          MessageSource(
+            order: item['order'] as int?,
+            chunkId: item['chunk_id'] as String?,
+            documentId: item['document_id'] as String?,
+            chunkIndex: item['chunk_index'] as int?,
+            filename: filename,
+          ),
+        );
+      }
+
+      AppLogger.debug('Загружено sources для $messageId: ${sources.length}');
+      return sources;
+    } on ServerException catch (e, stackTrace) {
+      // 404 — сообщение не найдено (или чужое). Sources просто нет.
+      if (e.statusCode == 404) {
+        AppLogger.info('Sources не найдены для $messageId (404)');
+        return const [];
+      }
+      throw ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Не удалось загрузить sources сообщения $messageId',
+        {'agentId': agentId, 'messageId': messageId},
+      );
+    } catch (e, stackTrace) {
+      throw ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Не удалось загрузить sources сообщения $messageId',
+        {'agentId': agentId, 'messageId': messageId},
       );
     }
   }

@@ -14,6 +14,8 @@ import '../domain/usecases/send_message_usecase.dart';
 import 'agent_provider.dart';
 import 'attachment_draft_provider.dart';
 import 'session_provider.dart';
+import 'dart:async';
+import '../domain/models/message_source.dart';
 
 // ============================================================
 // 1. СОСТОЯНИЕ ЧАТА
@@ -366,14 +368,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
               messageId: messageId,
             );
 
-            // Обновляем SSOT, только если сервер прислал **полную** пару.
-            // Иначе оставляем как есть — sessionProvider уже правильный
-            // (обновили при создании чата).
-            //
-            // **Не передаём agentDisplayName** — оно уже установлено
-            // при создании чата (в блоке выше). Сервер имя не шлёт,
-            // а если передать явно `null` — затрём текущее. `setSession`
-            // через `copyWithUnset` сохранит прежнее значение.
             if (agentId != null && conversationId != null) {
               _ref
                   .read(sessionProvider.notifier)
@@ -386,8 +380,28 @@ class ChatNotifier extends StateNotifier<ChatState> {
             AppLogger.debug('   📌 ID сообщения: $messageId');
             AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
 
-            // Отправка прошла — вложения «переехали» в историю сообщений.
-            // Черновик очищаем — там уже нечего хранить.
+            // Догружаем sources — только для RAG (`agentic_rag` и т.п.).
+            // У `document_chat` sources **уже** в самом сообщении (приходят
+            // в `GET .../messages`), и повторно их тянуть не надо.
+            //
+            // Признак RAG-сессии — `ragId != null` в `sessionProvider`.
+            // `agentId` тут не годится: хардкод имени агента — плохо.
+            //
+            // **Не блокируем** пользователя: `await` не ставим. Sources —
+            // вторичные данные; ответ уже получен и показан. Если они
+            // подгрузятся через 200 мс — обновим сообщение ещё раз.
+            // Если ошибка — тихо логируем.
+            final ragId = _ref.read(sessionProvider).ragId;
+            if (ragId != null && messageId != null && messageId.isNotEmpty) {
+              // Fire-and-forget — не ждём. UI не блокируется.
+              unawaited(
+                _loadSourcesForMessage(
+                  agentId: agentId ?? currentAgentId!,
+                  messageId: messageId,
+                ),
+              );
+            }
+
             _ref.read(attachmentDraftProvider.notifier).clear();
             break;
 
@@ -421,6 +435,69 @@ class ChatNotifier extends StateNotifier<ChatState> {
       _setLoading(false);
       _setStreaming(false);
     }
+  }
+
+  /// Догрузить sources для последнего AI-сообщения.
+  ///
+  /// Вызывается **после** `ChatStreamCompleted`, **только** для RAG.
+  /// **Fire-and-forget**: не блокируем пользователя, ошибки логируем
+  /// и **не** показываем — sources вторичны, ответ уже получен.
+  Future<void> _loadSourcesForMessage({
+    required String agentId,
+    required String messageId,
+  }) async {
+    try {
+      final sources = await _repository.getSources(
+        agentId: agentId,
+        messageId: messageId,
+      );
+
+      if (sources.isEmpty) {
+        AppLogger.debug(
+          'Sources пусто для сообщения $messageId — оставляем как есть',
+        );
+        return;
+      }
+
+      // Обновляем последнее AI-сообщение — то, у которого id == messageId.
+      //
+      // Ищем **по** id, а не по «последнее AI» — потому что за время
+      // сетевого запроса пользователь мог отправить **новое** сообщение,
+      // и «последнее AI» станет **другим**. Ищем надёжно.
+      _updateSourcesForMessage(messageId: messageId, sources: sources);
+    } catch (e, stackTrace) {
+      // Sources — вторичные. Ошибку логируем, но **не** показываем
+      // пользователю и **не** роняем ход.
+      AppLogger.logException(
+        'Ошибка догрузки sources для сообщения $messageId',
+        e,
+        stackTrace,
+        {'agentId': agentId, 'messageId': messageId},
+      );
+    }
+  }
+
+  /// Обновить sources у сообщения с указанным id.
+  ///
+  /// Если сообщения с таким id **нет** (например, пользователь уже
+  /// начал **новый** чат, или сообщение было удалено) — тихо выходим.
+  void _updateSourcesForMessage({
+    required String messageId,
+    required List<MessageSource> sources,
+  }) {
+    final currentMessages = state.messages;
+    final index = currentMessages.indexWhere((m) => m.id == messageId);
+    if (index < 0) {
+      AppLogger.debug(
+        'Сообщение $messageId не найдено в state — пропускаем обновление sources',
+      );
+      return;
+    }
+
+    final updatedMessage = currentMessages[index].copyWith(sources: sources);
+    final newMessages = List<Message>.from(currentMessages);
+    newMessages[index] = updatedMessage;
+    state = state.copyWith(messages: newMessages);
   }
 
   // ============================================================
