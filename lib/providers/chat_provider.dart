@@ -435,8 +435,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// показывал бы старое имя агента при открытии чата из истории.
   /// Раньше сессия дублировалась в `ChatState` и могла рассинхронизироваться;
   /// теперь такого класса проблем нет — сессия живёт в одном месте.
-  Future<void> loadChat(String agentId, String chatId) async {
-    AppLogger.info('Загрузка чата: агент=$agentId, чат=$chatId');
+  /// Загрузить чат из истории.
+  ///
+  /// [ragId] — id RAG-набора, если чат принадлежит RAG-агенту.
+  /// Для обычных агентов (`document_chat`, `epoz`, `chat`) — `null`.
+  ///
+  /// **Почему `ragId` критичен.** `agentic_rag` в `POST /v1/responses`
+  /// требует `model` в форме `rag/<uuid>` и **отвергает** просто
+  /// `agentic_rag` (`response.error: "model='agentic_rag' — ожидается
+  /// форма 'rag/<uuid>'"`). Значит, при открытии RAG-чата из истории
+  /// мы **обязаны** проставить `ragId` в `sessionProvider` — иначе
+  /// следующее сообщение уйдёт с неправильным `model`.
+  Future<void> loadChat(String agentId, String chatId, String? ragId) async {
+    AppLogger.info('Загрузка чата: агент=$agentId, чат=$chatId, ragId=$ragId');
 
     _setLoading(true);
     _clearError();
@@ -452,10 +463,26 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // См. комментарий в `sendMessage` — почему `agentsByIdProvider`.
       final displayName = _ref.read(agentsByIdProvider)[agentId]?.name;
 
-      // Обновляем SSOT — AppBar сразу покажет нужного агента.
+      // Обновляем SSOT — AppBar сразу покажет нужного агента,
+      // а следующий `sendMessage` возьмёт правильный `ragId`.
+      //
+      // `ragId` передаём **явно** (может быть `null` — для обычных
+      // агентов). `setSession` через `copyWithUnset` **сохранит**
+      // текущее значение, если мы **не** передали параметр. Но нам
+      // нужно **перезаписать**: при открытии чата без RAG в предыдущей
+      // сессии мог остаться `ragId` — и он бы **просочился** в
+      // следующее сообщение.
+      //
+      // Поэтому передаём **явно** — чтобы `null` действительно
+      // **сбросил** значение.
       _ref
           .read(sessionProvider.notifier)
-          .setSession(agentId, chatId, agentDisplayName: displayName);
+          .setSession(
+            agentId,
+            chatId,
+            ragId: ragId,
+            agentDisplayName: displayName,
+          );
 
       AppLogger.info('Загружено сообщений: ${messages.length}');
     } catch (e, stackTrace) {

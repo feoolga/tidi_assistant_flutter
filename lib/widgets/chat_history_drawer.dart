@@ -14,7 +14,15 @@ import '../screens/create_rag_screen.dart';
 import '../theme/app_theme.dart';
 
 class ChatHistoryDrawer extends ConsumerStatefulWidget {
-  final void Function(String agentId, String chatId) onChatSelected;
+  /// Колбэк выбора чата из списка.
+  ///
+  /// [ragId] — id RAG-набора, если чат принадлежит RAG-агенту.
+  /// Для обычных агентов (`document_chat`, `epoz`, `chat`) — `null`.
+  /// Нужен, чтобы `sessionProvider` получил правильный `ragId` и
+  /// следующий `sendMessage` собрал `model: "rag/<ragId>"` (иначе
+  /// `agentic_rag` вернёт `response.error`).
+  final void Function(String agentId, String chatId, String? ragId)
+  onChatSelected;
   final VoidCallback? onChatCreated;
   final VoidCallback? onResetSession;
 
@@ -448,7 +456,7 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
                 chat: chat,
                 onTap: () {
                   Navigator.pop(context);
-                  widget.onChatSelected(chat.agentId, chat.id);
+                  widget.onChatSelected(chat.agentId, chat.id, chat.ragId);
                 },
                 // Колбэки меню — открывают диалоги.
                 // Замыкание захватывает `chat` — то есть **этот**

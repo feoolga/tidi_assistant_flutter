@@ -75,9 +75,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }
 
-  void _loadChat(String agentId, String chatId) {
-    AppLogger.info('Загружаем чат: агент=$agentId, чат=$chatId');
-    ref.read(chatProvider.notifier).loadChat(agentId, chatId);
+  void _loadChat(String agentId, String chatId, String? ragId) {
+    AppLogger.info('Загружаем чат: агент=$agentId, чат=$chatId, ragId=$ragId');
+    ref.read(chatProvider.notifier).loadChat(agentId, chatId, ragId);
   }
 
   void _clearChat() {
@@ -184,9 +184,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     return Scaffold(
       drawer: ChatHistoryDrawer(
-        onChatSelected: (agentId, chatId) {
-          AppLogger.info('Выбран чат: агент=$agentId, чат=$chatId');
-          _loadChat(agentId, chatId);
+        onChatSelected: (agentId, chatId, ragId) {
+          AppLogger.info(
+            'Выбран чат: агент=$agentId, чат=$chatId, ragId=$ragId',
+          );
+          _loadChat(agentId, chatId, ragId);
         },
         onChatCreated: _startNewChat,
       ),
