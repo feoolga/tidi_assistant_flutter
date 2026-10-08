@@ -9,6 +9,14 @@ class ChatSessionDto {
   final String id;
   final String? title;
 
+  /// ID RAG-набора — только у чатов `agentic_rag`. У остальных
+  /// агентов (`document_chat`, `epoz`, `chat`) — `null`.
+  ///
+  /// Бэкенд кладёт это поле **только** в чаты RAG-агента. UI может
+  /// потом показать «Чат по набору X» или открыть нужный набор
+  /// при клике на чат.
+  final String? ragId;
+
   /// Дата создания — может быть `null`, если бэкенд прислал
   /// невалидное значение (см. [_parseDateOrNull]).
   final DateTime? createdAt;
@@ -19,6 +27,7 @@ class ChatSessionDto {
   const ChatSessionDto({
     required this.id,
     this.title,
+    this.ragId,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -45,6 +54,7 @@ class ChatSessionDto {
     return ChatSessionDto(
       id: json['id'].toString(), // Бэкенд может вернуть число
       title: json['title'] as String?,
+      ragId: json['rag_id'] as String?,
       createdAt: parseDateOrNull(json['created_at']),
       updatedAt: parseDateOrNull(json['updated_at']),
     );

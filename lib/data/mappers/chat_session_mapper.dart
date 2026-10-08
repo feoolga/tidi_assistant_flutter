@@ -18,6 +18,7 @@ class ChatSessionMapper {
       id: dto.id,
       agentId: agentId,
       title: dto.title,
+      ragId: dto.ragId,
       createdAt: dto.createdAt,
       updatedAt: dto.updatedAt,
     );

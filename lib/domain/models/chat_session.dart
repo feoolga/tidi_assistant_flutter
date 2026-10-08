@@ -13,6 +13,13 @@ class ChatSession {
   /// Название сессии (может быть null)
   final String? title;
 
+  /// ID RAG-набора — только у чатов `agentic_rag`.
+  ///
+  /// Для обычных агентов (`document_chat`, `epoz`, `chat`) — `null`.
+  /// Используется в UI: показать «Чат по набору X» или открыть
+  /// нужный набор при клике на чат.
+  final String? ragId;
+
   /// Дата создания — `null`, если бэкенд прислал невалидное значение.
   ///
   /// UI должен показывать «дата неизвестна» вместо подстановки
@@ -30,6 +37,7 @@ class ChatSession {
     required this.id,
     required this.agentId,
     this.title,
+    this.ragId,
     required this.createdAt,
     required this.updatedAt,
   });
