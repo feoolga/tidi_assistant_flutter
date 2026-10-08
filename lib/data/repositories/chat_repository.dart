@@ -185,7 +185,33 @@ class ChatRepository {
     try {
       final response = await _api.getConversations(agentId: agentId);
 
-      final List<dynamic> data = jsonDecode(response.body) as List;
+      // Формат ответа различается между агентами:
+      // - `document_chat` возвращает массив напрямую: `[{...}, {...}]`;
+      // - `agentic_rag` — обёртку: `{"data": [{...}, {...}]}`.
+      //
+      // `Master Router` форвардит ответ агента как есть, не нормализует.
+      // Значит, клиент должен читать оба формата.
+      final decoded = jsonDecode(response.body);
+
+      final List<dynamic> data;
+      if (decoded is List) {
+        data = decoded;
+      } else if (decoded is Map<String, dynamic>) {
+        final inner = decoded['data'];
+        if (inner is! List) {
+          throw FormatException(
+            'Ожидался массив или {"data": [...]}, получено: '
+            '${inner.runtimeType}',
+          );
+        }
+        data = inner;
+      } else {
+        throw FormatException(
+          'Ожидался массив или {"data": [...]}, получено: '
+          '${decoded.runtimeType}',
+        );
+      }
+
       final chats = data
           .map((json) => ChatSessionDto.fromJson(json as Map<String, dynamic>))
           .map((dto) => ChatSessionMapper.toDomain(dto, agentId))
