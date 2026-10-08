@@ -1,6 +1,7 @@
 // lib/domain/models/message.dart
 
 import 'attachment.dart';
+import 'message_source.dart';
 
 /// Модель сообщения в чате.
 /// Используется как для сообщений пользователя, так и для ответов AI.
@@ -46,18 +47,15 @@ class Message {
   // 4. ПОЛЯ ДЛЯ БУДУЩЕГО
   // ============================================================
 
-  /// Имена файлов, которые использовал AI при генерации ответа.
+  /// Источники, на которые опирался AI при генерации ответа.
   ///
-  /// **Формат:** `["накладная.pdf", "договор.pdf (частично)"]` — массив строк.
-  /// Пустой массив `[]` — если ответ не использовал файлов.
-  /// `null` — если поле не пришло от сервера.
+  /// Для `agentic_rag` — заполнены `order`/`chunkId`/`documentId`/
+  /// `chunkIndex` (см. `MessageSource`). Для `document_chat` —
+  /// только `filename`.
   ///
-  /// Частично обрезанный документ помечается суффиксом `" (частично)"`
-  /// (см. README `document_chat`, раздел «Контекстное окно» → «Обрезка»).
-  ///
-  /// **Важно:** это `List<String>`, а не `List<Map>`. README подтверждает:
-  /// `sources` = `[filename]`.
-  final List<String>? sources;
+  /// `null` — если поле не пришло от сервера. Пустой список `[]` —
+  /// если ответ не использовал источников.
+  final List<MessageSource>? sources;
 
   /// Оценка/фидбэк от пользователя (лайк/дизлайк).
   ///
@@ -100,7 +98,7 @@ class Message {
     String? sessionId,
     String? messageId,
     bool isFromUser = false,
-    List<String>? sources,
+    List<MessageSource>? sources,
   }) {
     return Message(
       id: messageId ?? DateTime.now().millisecondsSinceEpoch.toString(),
@@ -144,7 +142,7 @@ class Message {
     String? id,
     String? agentId,
     String? sessionId,
-    List<String>? sources,
+    List<MessageSource>? sources,
   }) {
     return Message(
       id: id ?? DateTime.now().millisecondsSinceEpoch.toString(),
@@ -211,7 +209,7 @@ class Message {
       attachments: attachments ?? this.attachments,
       sources: identical(sources, _unset)
           ? this.sources
-          : sources as List<String>?,
+          : sources as List<MessageSource>?,
       feedback: identical(feedback, _unset)
           ? this.feedback
           : feedback as Map<String, dynamic>?,

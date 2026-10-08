@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tidi_assistant_flutter/domain/models/attachment.dart';
 import 'package:tidi_assistant_flutter/domain/models/message.dart';
+import 'package:tidi_assistant_flutter/domain/models/message_source.dart';
 
 void main() {
   // Готовим "эталонное" сообщение, чтобы не писать его в каждом тесте
@@ -46,7 +47,7 @@ void main() {
       text: 'hi',
       isFromUser: false,
       timestamp: DateTime(2026, 1, 1),
-      sources: ['накладная.pdf'],
+      sources: [MessageSource.fromFilename('накладная.pdf')],
     );
 
     final cleared = msg.copyWith(sources: null);

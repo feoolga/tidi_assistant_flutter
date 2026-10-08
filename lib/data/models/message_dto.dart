@@ -1,5 +1,7 @@
 // lib/data/models/message_dto.dart
 
+import '../../domain/models/message_source.dart';
+
 /// DTO для сообщения — точно соответствует JSON-ответу бэкенда.
 ///
 /// Источник формата: README `document_chat`, раздел
@@ -45,18 +47,15 @@ class MessageDto {
   /// В JSON — `created_at` (ISO-8601, строкой).
   final DateTime timestamp;
 
-  /// Имена файлов, которые использовал ассистент при генерации ответа.
+  /// Источники, использованные AI при генерации ответа.
   ///
-  /// **Формат:** `["накладная.pdf", "договор.pdf (частично)"]` — массив строк.
-  /// Если ответ не использовал файлов — пустой массив `[]`.
+  /// **Два формата от разных агентов:**
+  /// - `document_chat` — массив строк: `["накладная.pdf", ...]`;
+  /// - `agentic_rag` — массив объектов с метаданными
+  ///   (`{"order":1, "chunk_id":"...", ..., "filename":"..."}`).
   ///
-  /// **Частично обрезанный документ** помечается суффиксом
-  /// `" (частично)"` — см. README `document_chat`, раздел
-  /// «Контекстное окно» → «Обрезка документа».
-  ///
-  /// **Важно:** это `List<String>`, а не `List<Map>`. README
-  /// дважды подтверждает: `sources` = `[filename]`.
-  final List<String>? sources;
+  /// Маппер приводит оба формата к `List<MessageSource>`.
+  final List<MessageSource>? sources;
 
   /// Оценка пользователя для ассистентского сообщения.
   ///
@@ -141,11 +140,18 @@ class MessageDto {
         json['id']?.toString() ??
         DateTime.now().millisecondsSinceEpoch.toString();
 
-    // --- Sources: массив строк ---
-    // Сервер присылает `["накладная.pdf"]`. Парсим через `cast<String>()` —
-    // если сервер вдруг пришлёт `List<Map>`, это упадёт с явной ошибкой,
-    // а не молча деградирует.
-    final List<String>? sources = (json['sources'] as List?)?.cast<String>();
+    // --- Sources: два формата ---
+    //
+    // Формат A (`document_chat`): `["file.pdf", "другой.pdf (частично)"]` —
+    // массив строк, только имена.
+    //
+    // Формат B (`agentic_rag`): `[{"order": 1, "chunk_id": "...",
+    // "document_id": "...", "chunk_index": 0, "filename": "..."}]` —
+    // массив объектов с метаданными.
+    //
+    // Приводим к единому `List<MessageSource>`. Пустой список `[]`
+    // превращается в пустой `List<MessageSource>` — не `null`.
+    final List<MessageSource>? sources = _parseSources(json['sources']);
 
     return MessageDto(
       id: id,
@@ -157,6 +163,41 @@ class MessageDto {
       agentId: json['agentId'] as String?,
       sessionId: json['sessionId'] as String?,
     );
+  }
+
+  /// Парсит sources из JSON — поддерживает два формата.
+  ///
+  /// Возвращает `null`, если поле отсутствует или не массив.
+  /// Возвращает пустой список, если массив пуст.
+  static List<MessageSource>? _parseSources(dynamic value) {
+    if (value is! List) return null;
+    if (value.isEmpty) return const [];
+
+    final result = <MessageSource>[];
+    for (final item in value) {
+      if (item is String) {
+        // Формат A (`document_chat`): просто имя.
+        result.add(MessageSource.fromFilename(item));
+      } else if (item is Map<String, dynamic>) {
+        // Формат B (`agentic_rag`): объект с полями.
+        final filename = item['filename'] as String?;
+        if (filename == null || filename.isEmpty) {
+          // Без filename source бессмысленный — пропускаем.
+          continue;
+        }
+        result.add(
+          MessageSource(
+            order: item['order'] as int?,
+            chunkId: item['chunk_id'] as String?,
+            documentId: item['document_id'] as String?,
+            chunkIndex: item['chunk_index'] as int?,
+            filename: filename,
+          ),
+        );
+      }
+      // Игнорируем всё остальное (числа, булевы, вложенные массивы).
+    }
+    return result;
   }
 
   // ============================================================
