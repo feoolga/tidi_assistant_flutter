@@ -356,47 +356,51 @@ class ChatNotifier extends StateNotifier<ChatState> {
           case ChatStreamCompleted(
             :final fullText,
             :final messageId,
-            :final agentId,
+            // Поле называется `agentId` (историческое имя), но по факту
+            // содержит `model` из ответа сервера (`rag/<uuid>` для RAG,
+            // `epoz` для обычных). Переименовываем в локальную переменную
+            // `modelFromResponse`, чтобы не путать с настоящим `agentId`
+            // для путей `/agents/{agentId}/...`.
+            //
+            // Синтаксис `поле: pattern` — второй вид field subpattern по спеке
+            // Dart 3: слева имя поля, справа pattern. См.
+            // https://dart.dev/language/patterns
+            agentId: final modelFromResponse,
             :final conversationId,
           ):
             _updateMessageText(fullText);
             _setStreaming(false);
 
             _completeMessage(
-              agentId: agentId,
+              agentId:
+                  currentAgentId, // ← было agentId (model), стало currentAgentId
               sessionId: conversationId ?? currentSessionId,
               messageId: messageId,
             );
 
-            if (agentId != null && conversationId != null) {
+            if (conversationId != null && currentAgentId != null) {
               _ref
                   .read(sessionProvider.notifier)
-                  .setSession(agentId, conversationId);
+                  .setSession(currentAgentId, conversationId); // ← было agentId
             }
 
             AppLogger.info('✅ Ответ получен полностью');
-            AppLogger.debug('   📌 Агент: $agentId');
+            AppLogger.debug('   📌 Агент (для путей): $currentAgentId');
+            AppLogger.debug(
+              '   📌 model (эхо сервера): $modelFromResponse',
+            ); // ← переименовали
             AppLogger.debug('   📌 Чат: $conversationId');
             AppLogger.debug('   📌 ID сообщения: $messageId');
             AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
 
-            // Догружаем sources — только для RAG (`agentic_rag` и т.п.).
-            // У `document_chat` sources **уже** в самом сообщении (приходят
-            // в `GET .../messages`), и повторно их тянуть не надо.
-            //
-            // Признак RAG-сессии — `ragId != null` в `sessionProvider`.
-            // `agentId` тут не годится: хардкод имени агента — плохо.
-            //
-            // **Не блокируем** пользователя: `await` не ставим. Sources —
-            // вторичные данные; ответ уже получен и показан. Если они
-            // подгрузятся через 200 мс — обновим сообщение ещё раз.
-            // Если ошибка — тихо логируем.
             final ragId = _ref.read(sessionProvider).ragId;
-            if (ragId != null && messageId != null && messageId.isNotEmpty) {
-              // Fire-and-forget — не ждём. UI не блокируется.
+            if (ragId != null &&
+                messageId != null &&
+                messageId.isNotEmpty &&
+                currentAgentId != null) {
               unawaited(
                 _loadSourcesForMessage(
-                  agentId: agentId ?? currentAgentId!,
+                  agentId: currentAgentId, // ← было agentId ?? currentAgentId!
                   messageId: messageId,
                 ),
               );
