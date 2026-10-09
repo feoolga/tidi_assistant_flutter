@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import 'attachment_preview.dart';
 import 'typing_indicator.dart';
 import '../core/utils/date_format.dart';
+import 'message_sources.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -96,6 +97,21 @@ class MessageBubble extends StatelessWidget {
                   if (showTypingIndicator || message.text.isNotEmpty)
                     const SizedBox(height: 8),
                   _buildAttachments(message.attachments),
+                ],
+
+                // Sources — только у AI, только если непустые.
+                // `document_chat` кладёт их в само сообщение,
+                // `agentic_rag` — догружает отдельной ручкой (см.
+                // `ChatNotifier._loadSourcesForMessage`). Здесь UI
+                // просто показывает то, что уже есть в `Message`.
+                if (!isFromUser &&
+                    message.sources != null &&
+                    message.sources!.isNotEmpty) ...[
+                  if (showTypingIndicator ||
+                      message.text.isNotEmpty ||
+                      message.attachments.isNotEmpty)
+                    const SizedBox(height: 4),
+                  MessageSources(sources: message.sources!),
                 ],
 
                 const SizedBox(height: 4),
