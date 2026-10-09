@@ -3,71 +3,42 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/models/rag_document.dart';
 import '../providers/rag_creation_provider.dart';
 import '../theme/app_theme.dart';
 
 /// Виджет **прогресса** создания RAG-набора.
 ///
-/// **Что показывает.** Читает `ragCreationProvider` и отображает
-/// **текущую фазу** создания:
-/// - `idle` — ничего (пустой `SizedBox`);
+/// **Фазы:**
+/// - `idle` — ничего;
 /// - `creatingRag` / `uploadingFiles` — спиннер + описание;
-/// - `waitingReadiness` — `LinearProgressIndicator` + счётчики
-///   документов («X из Y обработано»);
+/// - `waitingReadiness` — прогресс-бар + счётчики;
 /// - `ready` — галочка + кнопка «Открыть чат»;
-/// - `failed` — иконка ошибки + сообщение + кнопки действий.
-///
-/// **Роль в UI.** Используется в `CreateRagScreen` (D8.2)
-/// **после** нажатия «Создать». Форма (имя, файлы) — **отдельно**,
-/// потому что у неё свой жизненный цикл и свои заботы. Виджет
-/// прогресса — **только** про **текущее состояние** создания.
-///
-/// **Что НЕ делает:**
-/// - не управляет состоянием — это `RagCreationNotifier` (D6);
-/// - не выбирает файлы — это форма (D8.2);
-/// - не вызывает навигацию **напрямую** — через колбэки [onOpenChat],
-///   [onCancel], [onRetry].
-///
-/// **Почему колбэки, а не прямая работа с провайдером.**
-/// - Разделение ответственности: виджет **рисует**, экран **управляет**.
-/// - Переиспользуемость: если виджет понадобится **в другом месте** —
-///   колбэки уже готовы.
-/// - Тестируемость: можно тестировать виджет **отдельно** с фейковыми
-///   колбэками.
+/// - `failed` **без** `ragId` — ошибка + «Отмена» / «Повторить»;
+/// - `failed` **с** `hasPartialResult` — список файлов
+///   (принятые / не загруженные) + «Открыть чат» / «Удалить набор».
 class RagCreationProgress extends ConsumerWidget {
-  /// Колбэк «Открыть чат». Вызывается, когда пользователь нажимает
-  /// кнопку в фазе `ready`.
-  ///
-  /// **Может быть `null`** — тогда кнопка **не** показывается.
-  /// Это на случай, если виджет используется в **другом** контексте
-  /// (например, в информационном режиме).
   final VoidCallback? onOpenChat;
-
-  /// Колбэк «Отмена». Вызывается, когда пользователь хочет
-  /// **прервать** создание (в фазах `creatingRag`/`uploadingFiles`/
-  /// `waitingReadiness`) или **закрыть** ошибку (в `failed`).
-  ///
-  /// **Может быть `null`** — тогда кнопка **не** показывается.
   final VoidCallback? onCancel;
-
-  /// Колбэк «Повторить». Вызывается, когда пользователь хочет
-  /// **повторить** создание **после** ошибки.
-  ///
-  /// **Может быть `null`** — тогда кнопка **не** показывается.
   final VoidCallback? onRetry;
+
+  /// Колбэк «Удалить набор» — вызывается после подтверждения
+  /// в диалоге. Виджет сам показывает диалог, колбэк — уже
+  /// **финальное** действие.
+  final VoidCallback? onDeleteSet;
 
   const RagCreationProgress({
     super.key,
     this.onOpenChat,
     this.onCancel,
     this.onRetry,
+    this.onDeleteSet,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(ragCreationProvider);
 
-    // `idle` — ничего не показываем.
     if (state.phase == RagCreationPhase.idle) {
       return const SizedBox.shrink();
     }
@@ -90,17 +61,16 @@ class RagCreationProgress extends ConsumerWidget {
           const SizedBox(height: 16),
           _buildBody(state),
           const SizedBox(height: 20),
-          _buildActions(state),
+          _buildActions(context, state),
         ],
       ),
     );
   }
 
   // ============================================================
-  // ЗАГОЛОВОК — ИКОНКА + ТЕКСТ
+  // ЗАГОЛОВОК
   // ============================================================
 
-  /// Верхняя часть — иконка + описание фазы.
   Widget _buildHeader(RagCreationState state) {
     return Row(
       children: [
@@ -120,8 +90,16 @@ class RagCreationProgress extends ConsumerWidget {
     );
   }
 
-  /// Иконка статуса — разная для разных фаз.
   Widget _buildStatusIcon(RagCreationState state) {
+    // Частичная загрузка — жёлтая иконка предупреждения.
+    if (state.hasPartialResult) {
+      return const Icon(
+        Icons.warning_amber_rounded,
+        color: Colors.orange,
+        size: 28,
+      );
+    }
+
     switch (state.phase) {
       case RagCreationPhase.creatingRag:
       case RagCreationPhase.uploadingFiles:
@@ -143,19 +121,20 @@ class RagCreationProgress extends ConsumerWidget {
       case RagCreationPhase.failed:
         return const Icon(Icons.error_outline, color: Colors.red, size: 28);
       case RagCreationPhase.idle:
-        // Не должно случиться (проверка выше), но для exhaustive switch.
         return const SizedBox.shrink();
     }
   }
 
-  /// Текст заголовка — по фазе.
   String _phaseTitle(RagCreationState state) {
+    if (state.hasPartialResult) {
+      return 'Набор создан частично';
+    }
+
     switch (state.phase) {
       case RagCreationPhase.creatingRag:
         return 'Создаём набор…';
       case RagCreationPhase.uploadingFiles:
-        final filesCount = state.files.length;
-        return 'Загружаем файлы ($filesCount)…';
+        return 'Загружаем файлы (${state.files.length})…';
       case RagCreationPhase.waitingReadiness:
         return 'Обрабатываем документы…';
       case RagCreationPhase.ready:
@@ -168,11 +147,14 @@ class RagCreationProgress extends ConsumerWidget {
   }
 
   // ============================================================
-  // ТЕЛО — ДЕТАЛИ ФАЗЫ
+  // ТЕЛО
   // ============================================================
 
-  /// Середина — детали (счётчики, прогресс-бар, сообщение об ошибке).
   Widget _buildBody(RagCreationState state) {
+    if (state.hasPartialResult) {
+      return _buildPartialBody(state);
+    }
+
     switch (state.phase) {
       case RagCreationPhase.creatingRag:
       case RagCreationPhase.uploadingFiles:
@@ -188,7 +170,6 @@ class RagCreationProgress extends ConsumerWidget {
     }
   }
 
-  /// Тело для фаз создания/загрузки — просто текстовое пояснение.
   Widget _buildUploadingBody(RagCreationState state) {
     final text = state.phase == RagCreationPhase.creatingRag
         ? 'Это может занять несколько секунд…'
@@ -200,7 +181,6 @@ class RagCreationProgress extends ConsumerWidget {
     );
   }
 
-  /// Тело для фазы ожидания — прогресс-бар + счётчики документов.
   Widget _buildWaitingBody(RagCreationState state) {
     final ragSet = state.ragSet;
     if (ragSet == null) {
@@ -211,7 +191,7 @@ class RagCreationProgress extends ConsumerWidget {
     }
 
     final counts = ragSet.documentsCounts;
-    final percent = counts.readyPercent / 100; // 0.0 … 1.0
+    final percent = counts.readyPercent / 100;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -241,13 +221,11 @@ class RagCreationProgress extends ConsumerWidget {
     );
   }
 
-  /// Текст под прогресс-баром: «Готово: X из Y».
   String _waitingLabel(int ready, int total, int failed) {
     if (total == 0) return 'Ожидаем начала обработки…';
     return 'Готово: $ready из $total';
   }
 
-  /// Тело для фазы `ready` — пояснение, что можно начинать.
   Widget _buildReadyBody(RagCreationState state) {
     return const Text(
       'Набор проиндексирован. Можно задавать вопросы по документам.',
@@ -255,7 +233,7 @@ class RagCreationProgress extends ConsumerWidget {
     );
   }
 
-  /// Тело для фазы `failed` — сообщение об ошибке.
+  /// Тело для `failed` **без** `ragId` — набора нет.
   Widget _buildFailedBody(RagCreationState state) {
     return Text(
       state.error ?? 'Произошла неизвестная ошибка.',
@@ -263,19 +241,113 @@ class RagCreationProgress extends ConsumerWidget {
     );
   }
 
+  /// Тело для `failed` **с** `hasPartialResult` — частичная загрузка.
+  ///
+  /// Показываем:
+  /// 1. Счётчик «Загружено N из M».
+  /// 2. Список: принятые (✅) и не загруженные (❌).
+  /// 3. Причину ошибки upload (из `uploadError`).
+  Widget _buildPartialBody(RagCreationState state) {
+    final total = state.files.length;
+    final accepted = state.uploadedDocuments.length;
+    final notUploaded = _computeNotUploadedFilenames(state);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Загружено $accepted из $total файл(ов).',
+          style: const TextStyle(
+            fontSize: 14,
+            color: AppTheme.textPrimary,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        if (state.uploadError != null && state.uploadError!.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            state.uploadError!,
+            style: const TextStyle(fontSize: 13, color: Colors.red),
+          ),
+        ],
+        const SizedBox(height: 12),
+        // Принятые файлы — зелёная галочка.
+        for (final doc in state.uploadedDocuments)
+          _buildFileRow(
+            icon: Icons.check_circle_outline,
+            iconColor: AppTheme.primary,
+            filename: doc.filename,
+          ),
+        // Не загруженные — красный крестик.
+        for (final filename in notUploaded)
+          _buildFileRow(
+            icon: Icons.cancel_outlined,
+            iconColor: Colors.red,
+            filename: filename,
+          ),
+      ],
+    );
+  }
+
+  /// Один рядок списка: иконка + имя файла.
+  Widget _buildFileRow({
+    required IconData icon,
+    required Color iconColor,
+    required String filename,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: iconColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              filename,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppTheme.textPrimary,
+                height: 1.3,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Вычислить имена файлов, которые **не** принял сервер.
+  ///
+  /// Берём `state.files` (что выбрал пользователь) и **вычитаем**
+  /// те, что есть в `state.uploadedDocuments` (что принял сервер).
+  /// Сравнение — по имени файла (`basename`).
+  ///
+  /// **Про санитизацию имён.** Бекендер может «сплющивать» имена
+  /// (`../../etc/passwd` → `passwd`). Для простых имён сравнение
+  /// точно. Для сложных — может не совпасть. Пока оставляем
+  /// простое сравнение — этого достаточно для MVP.
+  List<String> _computeNotUploadedFilenames(RagCreationState state) {
+    final uploadedNames = state.uploadedDocuments
+        .map((RagDocument d) => d.filename)
+        .toSet();
+
+    return state.files
+        .map((f) => f.uri.pathSegments.last)
+        .where((name) => !uploadedNames.contains(name))
+        .toList();
+  }
+
   // ============================================================
-  // КНОПКИ ДЕЙСТВИЙ — РАЗНЫЕ ДЛЯ РАЗНЫХ ФАЗ
+  // КНОПКИ
   // ============================================================
 
-  /// Кнопки действий — зависят от фазы.
-  ///
-  /// - `creatingRag` / `uploadingFiles` / `waitingReadiness` —
-  ///   кнопка «Отмена», если передан [onCancel].
-  /// - `ready` — кнопка «Открыть чат», если передан [onOpenChat].
-  /// - `failed` — кнопки «Повторить» (если [onRetry]) и «Отмена»
-  ///   (если [onCancel]).
-  /// - `idle` — ничего.
-  Widget _buildActions(RagCreationState state) {
+  Widget _buildActions(BuildContext context, RagCreationState state) {
+    // Частичная загрузка — свои кнопки.
+    if (state.hasPartialResult) {
+      return _buildPartialActions(context);
+    }
+
     switch (state.phase) {
       case RagCreationPhase.creatingRag:
       case RagCreationPhase.uploadingFiles:
@@ -351,8 +423,77 @@ class RagCreationProgress extends ConsumerWidget {
     );
   }
 
+  /// Кнопки при частичной загрузке:
+  /// «Удалить набор» (outlined, красный) + «Открыть чат» (filled).
+  ///
+  /// «Удалить набор» — с **подтверждением** через `AlertDialog`.
+  Widget _buildPartialActions(BuildContext context) {
+    final hasDelete = onDeleteSet != null;
+    final hasOpen = onOpenChat != null;
+
+    if (!hasDelete && !hasOpen) return const SizedBox.shrink();
+
+    final deleteButton = hasDelete
+        ? _outlinedButton(
+            label: 'Удалить набор',
+            onPressed: () => _confirmDelete(context),
+            icon: Icons.delete_outline,
+            foregroundColor: Colors.red,
+          )
+        : null;
+
+    final openButton = hasOpen
+        ? _filledButton(
+            label: 'Открыть чат',
+            onPressed: onOpenChat!,
+            icon: Icons.chat_bubble_outline,
+          )
+        : null;
+
+    if (deleteButton != null && openButton != null) {
+      return Row(
+        children: [
+          Expanded(child: deleteButton),
+          const SizedBox(width: 12),
+          Expanded(child: openButton),
+        ],
+      );
+    }
+
+    return deleteButton ?? openButton ?? const SizedBox.shrink();
+  }
+
+  /// Диалог подтверждения удаления набора. Необратимо.
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Удалить набор?'),
+        content: const Text(
+          'Набор и все загруженные файлы будут удалены. '
+          'Это действие нельзя отменить.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      onDeleteSet?.call();
+    }
+  }
+
   // ============================================================
-  // ХЕЛПЕРЫ КНОПОК — ЕДИНЫЙ СТИЛЬ
+  // ХЕЛПЕРЫ КНОПОК
   // ============================================================
 
   Widget _filledButton({
@@ -380,6 +521,7 @@ class RagCreationProgress extends ConsumerWidget {
     required String label,
     required VoidCallback onPressed,
     required IconData icon,
+    Color? foregroundColor,
   }) {
     return SizedBox(
       height: 44,
@@ -388,9 +530,9 @@ class RagCreationProgress extends ConsumerWidget {
         icon: Icon(icon, size: 18),
         label: Text(label),
         style: OutlinedButton.styleFrom(
-          foregroundColor: AppTheme.textPrimary,
+          foregroundColor: foregroundColor ?? AppTheme.textPrimary,
           side: BorderSide(
-            color: AppTheme.primary.withValues(alpha: 0.4),
+            color: (foregroundColor ?? AppTheme.primary).withValues(alpha: 0.4),
             width: 1,
           ),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

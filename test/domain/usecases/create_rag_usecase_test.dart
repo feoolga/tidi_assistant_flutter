@@ -1,365 +1,392 @@
 // test/domain/usecases/create_rag_usecase_test.dart
 
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
 import 'package:tidi_assistant_flutter/core/config/app_config.dart';
 import 'package:tidi_assistant_flutter/core/errors/rag_exceptions.dart';
+import 'package:tidi_assistant_flutter/core/network/http_client.dart';
+import 'package:tidi_assistant_flutter/data/datasources/remote/rag_api.dart';
 import 'package:tidi_assistant_flutter/data/repositories/rag_repository.dart';
-import 'package:tidi_assistant_flutter/domain/models/rag_config.dart';
-import 'package:tidi_assistant_flutter/domain/models/rag_document.dart';
-import 'package:tidi_assistant_flutter/domain/models/rag_set.dart';
-import 'package:tidi_assistant_flutter/domain/models/rag_status.dart';
 import 'package:tidi_assistant_flutter/domain/usecases/create_rag_usecase.dart';
 
-// ============================================================
-// FAKE — ПОДМЕНА RagRepository
-// ============================================================
-
-/// Fake для `RagRepository` — переопределяем только те методы,
-/// которые **использует** `CreateRagUseCase`.
-///
-/// **Почему fake, а не mock.** Мокаем границу между слоями
-/// (репозиторий), а не внутренность (HTTP-клиент). Никаких
-/// новых зависимостей в `pubspec.yaml`.
-class FakeRagRepository extends RagRepository {
-  // ---- Настройки ответов ----
-  RagSet? createResult;
-  List<RagDocument>? uploadDocumentsResult;
-  RagSet? getResult;
-
-  // ---- Настройки ошибок ----
-  Object? createError;
-  Object? uploadDocumentsError;
-  Object? getError;
-
-  // ---- Записанные вызовы ----
-  String? lastCreateName;
-  String? lastCreateDescription;
-  String? lastUploadRagId;
-  int? lastUploadFilesCount;
-  String? lastGetRagId;
-
-  FakeRagRepository() : super();
-
-  @override
-  Future<RagSet> create({
-    required String name,
-    String? description,
-    Map<String, dynamic>? config,
-  }) async {
-    lastCreateName = name;
-    lastCreateDescription = description;
-    if (createError != null) throw createError!;
-    return createResult!;
-  }
-
-  @override
-  Future<List<RagDocument>> uploadDocuments({
-    required String ragId,
-    required List<File> files,
-  }) async {
-    lastUploadRagId = ragId;
-    lastUploadFilesCount = files.length;
-    if (uploadDocumentsError != null) throw uploadDocumentsError!;
-    return uploadDocumentsResult ?? const [];
-  }
-
-  @override
-  Future<RagSet> get(String ragId) async {
-    lastGetRagId = ragId;
-    if (getError != null) throw getError!;
-    return getResult!;
-  }
-}
-
-// ============================================================
-// ХЕЛПЕРЫ
-// ============================================================
-
-RagSet buildRagSet({
-  String id = 'rag-1',
-  String name = 'Тестовый',
-  RagStatus status = RagStatus.empty,
-  DocumentsCounts? documentsCounts,
-  bool hasPending = false,
-}) {
-  return RagSet(
-    id: id,
-    name: name,
-    status: status,
-    documentsCounts: documentsCounts ?? const DocumentsCounts(),
-    hasPending: hasPending,
-    config: const RagConfig(),
-    createdAt: DateTime(2026, 1, 1),
-    updatedAt: DateTime(2026, 1, 1),
-  );
-}
-
-/// Фиктивный `File` — только для передачи в UseCase.
-///
-/// **ВАЖНО:** файл **не** создаём на диске. В тестах fake-репозиторий
-/// **не** читает содержимое — только получает список. Но `_validate`
-/// в `CreateRagUseCase` **вызывает** `file.length()` → **упадёт**,
-/// если файла нет.
-///
-/// Поэтому в тестах **создаём** реальные временные файлы и
-/// **удаляем** их после теста. Иначе — `PathNotFoundException`.
-File createTempFile({required String filename, int sizeBytes = 100}) {
-  final dir = Directory.systemTemp.createTempSync('rag_test_');
-  final file = File('${dir.path}/$filename');
-  file.writeAsBytesSync(List.filled(sizeBytes, 0));
-  return file;
-}
-
-/// Удалить временный файл (и папку).
-void cleanupTempFile(File file) {
-  try {
-    file.parent.deleteSync(recursive: true);
-  } catch (_) {
-    // Игнорируем ошибки очистки — это best effort.
-  }
-}
-
-// ============================================================
-// ТЕСТЫ
-// ============================================================
-
 void main() {
+  setUp(() {
+    dotenv.testLoad(fileInput: 'API_URL=http://test.local\nUSER_ID=test-user');
+  });
+
   // ============================================================
-  // CreateRagUseCase
+  // ХЕЛПЕРЫ
   // ============================================================
 
-  group('CreateRagUseCase', () {
-    // ---- HAPPY PATH ----
-
-    test(
-      'happy path: create → upload → get → возвращает обновлённый RagSet',
-      () async {
-        final file = createTempFile(filename: 'договор.pdf', sizeBytes: 100);
-        addTearDown(() => cleanupTempFile(file));
-
-        final createdSet = buildRagSet(id: 'rag-42', name: 'Регламенты');
-        final updatedSet = buildRagSet(
-          id: 'rag-42',
-          name: 'Регламенты',
-          status: RagStatus.ingesting,
-          hasPending: true,
-        );
-
-        final repo = FakeRagRepository()
-          ..createResult = createdSet
-          ..uploadDocumentsResult = const []
-          ..getResult = updatedSet;
-        final useCase = CreateRagUseCase(repository: repo);
-
-        final result = await useCase.execute(name: 'Регламенты', files: [file]);
-
-        expect(result.id, 'rag-42');
-        expect(result.status, RagStatus.ingesting);
-        expect(result.hasPending, isTrue);
-
-        // Проверяем, что все вызовы сделаны правильно.
-        expect(repo.lastCreateName, 'Регламенты');
-        expect(repo.lastUploadRagId, 'rag-42');
-        expect(repo.lastUploadFilesCount, 1);
-        expect(repo.lastGetRagId, 'rag-42');
-      },
+  CreateRagUseCase makeUseCase(http.Client mockClient) {
+    return CreateRagUseCase(
+      repository: RagRepository(
+        api: RagApi(httpClient: AppHttpClient(client: mockClient)),
+      ),
     );
+  }
 
-    test('description пробрасывается в create', () async {
-      final file = createTempFile(filename: 'акт.pdf');
-      addTearDown(() => cleanupTempFile(file));
+  /// Реальный временный файл — нужен для `_validateFile`, который
+  /// вызывает `file.length()`.
+  File createTempFile({required String filename, int sizeBytes = 100}) {
+    final dir = Directory.systemTemp.createTempSync('rag_test_');
+    final file = File('${dir.path}/$filename');
+    file.writeAsBytesSync(List.filled(sizeBytes, 0));
+    return file;
+  }
 
-      final repo = FakeRagRepository()
-        ..createResult = buildRagSet()
-        ..getResult = buildRagSet();
-      final useCase = CreateRagUseCase(repository: repo);
+  void cleanupTempFile(File file) {
+    try {
+      file.parent.deleteSync(recursive: true);
+    } catch (_) {}
+  }
 
-      await useCase.execute(
-        name: 'Имя',
-        description: 'Описание',
-        files: [file],
-      );
+  http.Response jsonResponse(String body, [int status = 200]) {
+    return http.Response(
+      body,
+      status,
+      headers: const {'content-type': 'application/json; charset=utf-8'},
+    );
+  }
 
-      expect(repo.lastCreateDescription, 'Описание');
+  /// Минимальный JSON набора — такой, чтобы `RagSetMapper` не упал.
+  Map<String, dynamic> ragSetJson({
+    String id = 'rag-1',
+    String name = 'Набор',
+    String status = 'empty',
+    int total = 0,
+    int ready = 0,
+    int failed = 0,
+    int pending = 0,
+    bool hasPending = false,
+  }) {
+    return {
+      'id': id,
+      'name': name,
+      'status': status,
+      'documents': {
+        'total': total,
+        'ready': ready,
+        'failed': failed,
+        'pending': pending,
+      },
+      'chunks_total': 0,
+      'has_pending': hasPending,
+      'has_icon': false,
+      'config': {
+        'prompt': null,
+        'temperature': 0.3,
+        'top_k': 5,
+        'score_threshold': 0.4,
+      },
+      'created_at': '2026-10-08T06:09:24.807597Z',
+      'updated_at': '2026-10-08T06:09:24.807597Z',
+    };
+  }
+
+  /// JSON одного документа набора.
+  Map<String, dynamic> ragDocumentJson({
+    String id = 'doc-1',
+    String filename = 'file.pdf',
+    String status = 'pending',
+  }) {
+    return {
+      'id': id,
+      'filename': filename,
+      'status': status,
+      'created_at': '2026-10-08T06:09:24.807597Z',
+    };
+  }
+
+  /// JSON ошибки в формате бэкенда.
+  String errorJson(String message) {
+    return jsonEncode({
+      'error': {
+        'message': message,
+        'type': 'invalid_request_error',
+        'param': null,
+        'code': null,
+      },
     });
+  }
 
-    // ---- ВАЛИДАЦИЯ ----
+  // ============================================================
+  // ТЕСТ 1: полный успех
+  // ============================================================
 
-    test('пустое имя → ArgumentError', () async {
-      final file = createTempFile(filename: 'файл.pdf');
-      addTearDown(() => cleanupTempFile(file));
+  test('полный успех: create → upload → get → documents передан', () async {
+    final file = createTempFile(filename: 'договор.pdf');
+    addTearDown(() => cleanupTempFile(file));
 
-      final repo = FakeRagRepository();
-      final useCase = CreateRagUseCase(repository: repo);
+    final mockClient = MockClient((request) async {
+      final path = request.url.path;
+      final method = request.method;
 
-      expect(
-        () => useCase.execute(name: '', files: [file]),
-        throwsA(isA<ArgumentError>()),
-      );
-    });
-
-    test('имя из пробелов → ArgumentError', () async {
-      final file = createTempFile(filename: 'файл.pdf');
-      addTearDown(() => cleanupTempFile(file));
-
-      final repo = FakeRagRepository();
-      final useCase = CreateRagUseCase(repository: repo);
-
-      expect(
-        () => useCase.execute(name: '   ', files: [file]),
-        throwsA(isA<ArgumentError>()),
-      );
-    });
-
-    test('имя длиннее лимита → ArgumentError', () async {
-      final file = createTempFile(filename: 'файл.pdf');
-      addTearDown(() => cleanupTempFile(file));
-
-      final repo = FakeRagRepository();
-      final useCase = CreateRagUseCase(repository: repo);
-
-      final longName = 'a' * (AppConfig.ragMaxNameLength + 1);
-
-      expect(
-        () => useCase.execute(name: longName, files: [file]),
-        throwsA(isA<ArgumentError>()),
-      );
-    });
-
-    test('пустой список файлов → ArgumentError', () async {
-      final repo = FakeRagRepository();
-      final useCase = CreateRagUseCase(repository: repo);
-
-      expect(
-        () => useCase.execute(name: 'Имя', files: const []),
-        throwsA(isA<ArgumentError>()),
-      );
-    });
-
-    test('слишком много файлов → RagException.tooManyFilesInBatch', () async {
-      final repo = FakeRagRepository();
-      final useCase = CreateRagUseCase(repository: repo);
-
-      final manyFiles = <File>[];
-      for (var i = 0; i <= AppConfig.ragMaxFilesPerBatch; i++) {
-        final file = createTempFile(filename: 'файл$i.pdf');
-        manyFiles.add(file);
-        addTearDown(() => cleanupTempFile(file));
+      // create
+      if (method == 'POST' && path.endsWith('/rags')) {
+        return jsonResponse(jsonEncode(ragSetJson(id: 'rag-42')), 201);
+      }
+      // uploadDocuments
+      if (method == 'POST' && path.endsWith('/documents')) {
+        return jsonResponse(
+          jsonEncode({
+            'documents': [
+              ragDocumentJson(id: 'doc-1', filename: 'договор.pdf'),
+            ],
+          }),
+          202,
+        );
+      }
+      // get
+      if (method == 'GET' && path.endsWith('/rags/rag-42')) {
+        return jsonResponse(
+          jsonEncode(
+            ragSetJson(
+              id: 'rag-42',
+              status: 'ingesting',
+              total: 1,
+              pending: 1,
+              hasPending: true,
+            ),
+          ),
+        );
       }
 
-      expect(
-        () => useCase.execute(name: 'Имя', files: manyFiles),
-        throwsA(
-          isA<RagException>().having(
-            (e) => e.code,
-            'code',
-            'RAG_TOO_MANY_FILES_IN_BATCH',
-          ),
-        ),
-      );
+      return jsonResponse('{"error":{"message":"unexpected request"}}', 500);
     });
 
-    test('неподдерживаемый формат → RagException.unsupportedFormat', () async {
-      final file = createTempFile(filename: 'файл.xyz');
+    final useCase = makeUseCase(mockClient);
+    final result = await useCase.execute(name: 'Регламенты', files: [file]);
+
+    expect(result.isPartial, isFalse);
+    expect(result.uploadError, isNull);
+    expect(result.set.id, 'rag-42');
+    expect(result.set.status.name, 'ingesting');
+    expect(result.documents.length, 1);
+    expect(result.documents.first.filename, 'договор.pdf');
+  });
+
+  // ============================================================
+  // ТЕСТ 2: частичная загрузка — upload упал, документы перечитаны
+  // ============================================================
+
+  test(
+    'частичная загрузка: upload 413 → isPartial, документы перечитаны',
+    () async {
+      final file = createTempFile(filename: 'большой.pdf');
       addTearDown(() => cleanupTempFile(file));
 
-      final repo = FakeRagRepository();
-      final useCase = CreateRagUseCase(repository: repo);
+      final mockClient = MockClient((request) async {
+        final path = request.url.path;
+        final method = request.method;
 
-      expect(
-        () => useCase.execute(name: 'Имя', files: [file]),
-        throwsA(
-          isA<RagException>().having(
-            (e) => e.code,
-            'code',
-            'RAG_UNSUPPORTED_FORMAT',
-          ),
-        ),
-      );
-    });
+        // create
+        if (method == 'POST' && path.endsWith('/rags')) {
+          return jsonResponse(jsonEncode(ragSetJson(id: 'rag-77')), 201);
+        }
+        // uploadDocuments → 413 (частичная загрузка)
+        if (method == 'POST' && path.endsWith('/documents')) {
+          return jsonResponse(errorJson('Файл слишком большой'), 413);
+        }
+        // get (перечитать набор)
+        if (method == 'GET' && path.endsWith('/rags/rag-77')) {
+          return jsonResponse(
+            jsonEncode(
+              ragSetJson(id: 'rag-77', status: 'ready', total: 1, ready: 1),
+            ),
+          );
+        }
+        // listDocuments (перечитать документы)
+        if (method == 'GET' && path.endsWith('/rags/rag-77/documents')) {
+          return jsonResponse(
+            jsonEncode({
+              'data': [
+                ragDocumentJson(
+                  id: 'doc-A',
+                  filename: 'приняли.pdf',
+                  status: 'success',
+                ),
+              ],
+            }),
+          );
+        }
 
-    test('файл больше лимита → RagException.fileTooLarge', () async {
-      // Создаём файл чуть больше лимита.
-      final file = createTempFile(
-        filename: 'big.pdf',
-        sizeBytes: AppConfig.ragMaxFileSizeBytes + 1,
-      );
-      addTearDown(() => cleanupTempFile(file));
+        return jsonResponse('{"error":{"message":"unexpected"}}', 500);
+      });
 
-      final repo = FakeRagRepository();
-      final useCase = CreateRagUseCase(repository: repo);
+      final useCase = makeUseCase(mockClient);
+      final result = await useCase.execute(name: 'Регламенты', files: [file]);
 
-      expect(
-        () => useCase.execute(name: 'Имя', files: [file]),
-        throwsA(
-          isA<RagException>().having(
-            (e) => e.code,
-            'code',
-            'RAG_FILE_TOO_LARGE',
-          ),
-        ),
-      );
-    });
+      expect(result.isPartial, isTrue);
+      expect(result.uploadError, isNotNull);
+      expect(result.uploadError!.code, 'RAG_FILE_TOO_LARGE');
+      expect(result.set.id, 'rag-77');
+      expect(result.set.status.name, 'ready');
+      expect(result.documents.length, 1);
+      expect(result.documents.first.filename, 'приняли.pdf');
+    },
+  );
 
-    // ---- ОШИБКИ РЕПОЗИТОРИЯ ----
+  // ============================================================
+  // ТЕСТ 3: частичная загрузка + listDocuments упал → пустой список
+  // ============================================================
 
-    test('create упал → пробрасывает RagException', () async {
+  test(
+    'частичная загрузка + listDocuments 500 → isPartial, documents = []',
+    () async {
       final file = createTempFile(filename: 'файл.pdf');
       addTearDown(() => cleanupTempFile(file));
 
-      final repo = FakeRagRepository()
-        ..createError = RagException.limitReached();
-      final useCase = CreateRagUseCase(repository: repo);
+      final mockClient = MockClient((request) async {
+        final path = request.url.path;
+        final method = request.method;
 
-      expect(
-        () => useCase.execute(name: 'Имя', files: [file]),
-        throwsA(
-          isA<RagException>().having(
-            (e) => e.code,
-            'code',
-            'RAG_LIMIT_REACHED',
-          ),
+        if (method == 'POST' && path.endsWith('/rags')) {
+          return jsonResponse(jsonEncode(ragSetJson(id: 'rag-88')), 201);
+        }
+        if (method == 'POST' && path.endsWith('/documents')) {
+          return jsonResponse(errorJson('Сервер упал'), 502);
+        }
+        if (method == 'GET' && path.endsWith('/rags/rag-88')) {
+          return jsonResponse(jsonEncode(ragSetJson(id: 'rag-88')));
+        }
+        if (method == 'GET' && path.endsWith('/rags/rag-88/documents')) {
+          // listDocuments падает — use-case должен вернуть пустой список
+          return jsonResponse(errorJson('server error'), 500);
+        }
+
+        return jsonResponse('{"error":{"message":"unexpected"}}', 500);
+      });
+
+      final useCase = makeUseCase(mockClient);
+      final result = await useCase.execute(name: 'Регламенты', files: [file]);
+
+      expect(result.isPartial, isTrue);
+      expect(result.uploadError, isNotNull);
+      expect(result.set.id, 'rag-88');
+      expect(result.documents, isEmpty);
+    },
+  );
+
+  // ============================================================
+  // ТЕСТ 4: create упал → исключение летит наружу
+  // ============================================================
+
+  test('create вернул 400 → исключение наружу (не partial)', () async {
+    final file = createTempFile(filename: 'файл.pdf');
+    addTearDown(() => cleanupTempFile(file));
+
+    final mockClient = MockClient((request) async {
+      if (request.method == 'POST' && request.url.path.endsWith('/rags')) {
+        return jsonResponse(errorJson('Невалидное тело'), 400);
+      }
+      return jsonResponse('{"error":{"message":"unexpected"}}', 500);
+    });
+
+    final useCase = makeUseCase(mockClient);
+
+    expect(
+      () => useCase.execute(name: 'Имя', files: [file]),
+      throwsA(isA<RagException>()),
+    );
+  });
+
+  // ============================================================
+  // ТЕСТ 5: валидация — пустое имя, до сети не доходит
+  // ============================================================
+
+  test('пустое имя → ArgumentError, HTTP-запрос не идёт', () async {
+    var requestCount = 0;
+    final mockClient = MockClient((request) async {
+      requestCount++;
+      return jsonResponse('{}', 200);
+    });
+
+    final useCase = makeUseCase(mockClient);
+
+    final file = createTempFile(filename: 'файл.pdf');
+    addTearDown(() => cleanupTempFile(file));
+
+    expect(
+      () => useCase.execute(name: '', files: [file]),
+      throwsA(isA<ArgumentError>()),
+    );
+
+    // До сети дело не дошло — 0 запросов.
+    expect(requestCount, 0);
+  });
+
+  // ============================================================
+  // ТЕСТ 6: валидация — пустой список файлов
+  // ============================================================
+
+  test('пустой список файлов → ArgumentError', () async {
+    final mockClient = MockClient((request) async {
+      return jsonResponse('{}', 200);
+    });
+
+    final useCase = makeUseCase(mockClient);
+
+    expect(
+      () => useCase.execute(name: 'Имя', files: const []),
+      throwsA(isA<ArgumentError>()),
+    );
+  });
+
+  // ============================================================
+  // ТЕСТ 7: валидация — неподдерживаемый формат
+  // ============================================================
+
+  test('неподдерживаемый формат → RagException.unsupportedFormat', () async {
+    final file = createTempFile(filename: 'файл.xyz');
+    addTearDown(() => cleanupTempFile(file));
+
+    final mockClient = MockClient((request) async {
+      return jsonResponse('{}', 200);
+    });
+
+    final useCase = makeUseCase(mockClient);
+
+    expect(
+      () => useCase.execute(name: 'Имя', files: [file]),
+      throwsA(
+        isA<RagException>().having(
+          (e) => e.code,
+          'code',
+          'RAG_UNSUPPORTED_FORMAT',
         ),
-      );
+      ),
+    );
+  });
+
+  // ============================================================
+  // ТЕСТ 8: валидация — слишком большой файл
+  // ============================================================
+
+  test('файл больше лимита → RagException.fileTooLarge', () async {
+    final file = createTempFile(
+      filename: 'big.pdf',
+      sizeBytes: AppConfig.ragMaxFileSizeBytes + 1,
+    );
+    addTearDown(() => cleanupTempFile(file));
+
+    final mockClient = MockClient((request) async {
+      return jsonResponse('{}', 200);
     });
 
-    test('uploadDocuments упал → пробрасывает RagException', () async {
-      final file = createTempFile(filename: 'файл.pdf');
-      addTearDown(() => cleanupTempFile(file));
+    final useCase = makeUseCase(mockClient);
 
-      final repo = FakeRagRepository()
-        ..createResult = buildRagSet(id: 'rag-1')
-        ..uploadDocumentsError = RagException.uploadFailed();
-      final useCase = CreateRagUseCase(repository: repo);
-
-      expect(
-        () => useCase.execute(name: 'Имя', files: [file]),
-        throwsA(
-          isA<RagException>().having(
-            (e) => e.code,
-            'code',
-            'RAG_UPLOAD_FAILED',
-          ),
-        ),
-      );
-    });
-
-    test('get упал → НЕ падаем, возвращаем набор от create', () async {
-      final file = createTempFile(filename: 'файл.pdf');
-      addTearDown(() => cleanupTempFile(file));
-
-      final createdSet = buildRagSet(id: 'rag-1', status: RagStatus.empty);
-      final repo = FakeRagRepository()
-        ..createResult = createdSet
-        ..getError = RagException.createFailed();
-      final useCase = CreateRagUseCase(repository: repo);
-
-      final result = await useCase.execute(name: 'Имя', files: [file]);
-
-      expect(result.id, 'rag-1');
-      expect(result.status, RagStatus.empty);
-    });
+    expect(
+      () => useCase.execute(name: 'Имя', files: [file]),
+      throwsA(
+        isA<RagException>().having((e) => e.code, 'code', 'RAG_FILE_TOO_LARGE'),
+      ),
+    );
   });
 }

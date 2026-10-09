@@ -9,6 +9,7 @@ import '../core/config/app_config.dart';
 import '../core/errors/error_handler.dart';
 import '../core/logger/app_logger.dart';
 import '../core/utils/copy_with_marker.dart';
+import '../domain/models/rag_document.dart';
 import '../domain/models/rag_set.dart';
 import '../domain/usecases/create_rag_usecase.dart';
 import '../domain/usecases/start_rag_chat_usecase.dart';
@@ -36,28 +37,16 @@ import 'session_provider.dart';
 /// ```
 ///
 /// Плюс `failed` — на **любой** фазе возможна ошибка.
-///
-/// **Почему отдельные фазы, а не просто «загрузка»:** UI
-/// показывает **разные** сообщения и индикаторы в каждой фазе.
-/// Плюс — фаза `failed` **сохраняет** контекст (например, `ragId`
-/// уже создан, если упало на `uploadingFiles`).
+/// **Две разновидности `failed`:**
+/// - `ragId == null` — набор не создан, всё потеряно;
+/// - `ragId != null` + `isPartial == true` — набор создан, часть
+///   файлов принята; UI показывает список и даёт выбор.
 enum RagCreationPhase {
-  /// Ничего не происходит. Пользователь может начать создание.
   idle,
-
-  /// Создаём RAG-набор (`RagRepository.create`).
   creatingRag,
-
-  /// Загружаем файлы в набор (`RagRepository.uploadDocuments`).
   uploadingFiles,
-
-  /// Ждём готовности набора (`WatchRagReadinessUseCase`).
   waitingReadiness,
-
-  /// Набор готов. Можно открывать чат.
   ready,
-
-  /// Ошибка на любой из фаз.
   failed,
 }
 
@@ -67,25 +56,40 @@ enum RagCreationPhase {
 
 /// Состояние создания RAG-набора.
 ///
-/// **Что здесь есть:**
-/// - [phase] — что сейчас происходит (UI по нему решает, что рисовать);
-/// - [name] — имя набора (для отображения в UI);
-/// - [files] — выбранные файлы (для отображения списка);
-/// - [ragId] — ID созданного набора (появляется после `create`);
-/// - [ragSet] — актуальное состояние набора (со счётчиками документов);
-/// - [error] — ошибка (для SnackBar);
-/// - [createdChatId] — ID созданного чата (после `createChat`).
-///
-/// **Что НЕ здесь:**
-/// - сам чат (`ChatSession`) — он в `sessionProvider` (SSOT);
-/// - `agentId` — константа `AppConfig.ragChatAgentId`.
+/// **Поля фазы `failed`:**
+/// - [ragId] — если `!= null`, набор уже создан;
+/// - [ragSet] — счётчики и статус набора;
+/// - [uploadedDocuments] — список принятых документов;
+/// - [isPartial] — `true`, если upload упал на середине;
+/// - [uploadError] — текст ошибки upload (для отображения);
+/// - [error] — общий текст ошибки (для SnackBar).
 class RagCreationState {
   final RagCreationPhase phase;
   final String? name;
   final List<File> files;
   final String? ragId;
   final RagSet? ragSet;
+
+  /// Список принятых документов набора.
+  ///
+  /// - при `ready` — то, что вернул `uploadDocuments`;
+  /// - при `failed` с `isPartial: true` — перечитанный список
+  ///   через `listDocuments` (в `CreateRagUseCase`);
+  /// - пусто — во всех остальных фазах.
+  final List<RagDocument> uploadedDocuments;
+
+  /// `true` — upload упал, набор частично загружен.
+  final bool isPartial;
+
+  /// Текст ошибки upload — для отображения в теле блока прогресса
+  /// при частичной загрузке.
+  final String? uploadError;
+
+  /// Общая ошибка фазы — для SnackBar (например, «не удалось создать
+  /// набор», «не удалось создать чат»).
   final String? error;
+
+  /// ID созданного чата (после `createChat`).
   final String? createdChatId;
 
   const RagCreationState({
@@ -94,11 +98,13 @@ class RagCreationState {
     this.files = const [],
     this.ragId,
     this.ragSet,
+    this.uploadedDocuments = const [],
+    this.isPartial = false,
+    this.uploadError,
     this.error,
     this.createdChatId,
   });
 
-  /// Начальное состояние — ничего не происходит.
   factory RagCreationState.initial() => const RagCreationState();
 
   RagCreationState copyWith({
@@ -107,6 +113,9 @@ class RagCreationState {
     List<File>? files,
     Object? ragId = copyWithUnset,
     Object? ragSet = copyWithUnset,
+    List<RagDocument>? uploadedDocuments,
+    bool? isPartial,
+    Object? uploadError = copyWithUnset,
     Object? error = copyWithUnset,
     Object? createdChatId = copyWithUnset,
   }) {
@@ -116,6 +125,11 @@ class RagCreationState {
       files: files ?? this.files,
       ragId: isCopyWithUnset(ragId) ? this.ragId : ragId as String?,
       ragSet: isCopyWithUnset(ragSet) ? this.ragSet : ragSet as RagSet?,
+      uploadedDocuments: uploadedDocuments ?? this.uploadedDocuments,
+      isPartial: isPartial ?? this.isPartial,
+      uploadError: isCopyWithUnset(uploadError)
+          ? this.uploadError
+          : uploadError as String?,
       error: isCopyWithUnset(error) ? this.error : error as String?,
       createdChatId: isCopyWithUnset(createdChatId)
           ? this.createdChatId
@@ -123,25 +137,28 @@ class RagCreationState {
     );
   }
 
-  // ---- Производные геттеры ----
-
-  /// Идёт ли сейчас какая-то работа?
   bool get isInProgress =>
       phase == RagCreationPhase.creatingRag ||
       phase == RagCreationPhase.uploadingFiles ||
       phase == RagCreationPhase.waitingReadiness;
 
-  /// Есть ли ошибка?
   bool get hasError => error != null && error!.isNotEmpty;
 
-  /// Готов ли набор?
   bool get isReady => phase == RagCreationPhase.ready;
+
+  /// Есть ли **частичный** результат — набор с неполными файлами.
+  ///
+  /// Используется UI: при `true` показываем список файлов и кнопки
+  /// «Открыть чат» / «Удалить набор».
+  bool get hasPartialResult =>
+      phase == RagCreationPhase.failed && ragId != null && isPartial;
 
   @override
   String toString() {
     return 'RagCreationState(phase: $phase, name: $name, '
         'filesCount: ${files.length}, ragId: $ragId, '
-        'hasError: $hasError)';
+        'docsCount: ${uploadedDocuments.length}, '
+        'isPartial: $isPartial, hasError: $hasError)';
   }
 }
 
@@ -149,29 +166,6 @@ class RagCreationState {
 // 3. NOTIFIER
 // ============================================================
 
-/// Нотифаер создания RAG-набора.
-///
-/// **Роль.** Оркестратор: вызывает UseCase-ы в правильном порядке,
-/// обновляет state, пишет в `sessionProvider` при создании чата.
-///
-/// **Флоу «RAG по кнопке»:**
-/// 1. UI вызывает `start(name, files)`.
-/// 2. `CreateRagUseCase` — создаёт набор + загружает файлы +
-///    перечитывает `RagSet`.
-/// 3. `WatchRagReadinessUseCase` — эмитит `RagSet` каждые N секунд,
-///    пока `hasPending == true`.
-/// 4. Когда `hasPending == false` — `phase: ready`.
-/// 5. UI показывает «Готово» + кнопку «Открыть чат».
-/// 6. UI вызывает `createChat()`.
-/// 7. `StartRagChatUseCase` — создаёт чат.
-/// 8. Пишем в `sessionProvider`: `agentId=agentic_rag`,
-///    `sessionId=chatId`, `ragId=...`, `agentDisplayName=name`.
-/// 9. UI переходит в `ChatScreen`.
-///
-/// **Что НЕ делает:**
-/// - не переключает экраны (это UI, D8);
-/// - не показывает SnackBar (это UI, D8);
-/// - не управляет списком RAG-наборов (это D7).
 class RagCreationNotifier extends StateNotifier<RagCreationState> {
   // ============================================================
   // 3.1. ЗАВИСИМОСТИ
@@ -182,7 +176,6 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
   final WatchRagReadinessUseCase _watchRagReadinessUseCase;
   final StartRagChatUseCase _startRagChatUseCase;
 
-  /// Текущая подписка на polling — нужна для отмены.
   StreamSubscription<RagSet>? _readinessSubscription;
 
   RagCreationNotifier({
@@ -202,83 +195,91 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
 
   /// Запустить создание RAG-набора.
   ///
-  /// **Шаги:**
-  /// 1. `phase: creatingRag` — создаём набор.
-  /// 2. `phase: uploadingFiles` — загружаем файлы.
-  /// 3. `phase: waitingReadiness` — начинаем polling.
-  /// 4. Когда набор готов (`hasPending == false`) — `phase: ready`.
-  ///
-  /// **При ошибке на любом шаге** — `phase: failed`, `error` заполнен.
-  /// `ragId` сохраняется, если уже был создан.
+  /// **Два пути:**
+  /// - **полный успех** — все файлы приняты, дальше polling готовности,
+  ///   `phase: ready`;
+  /// - **частичный** — upload упал, набор есть, `phase: failed` +
+  ///   `isPartial: true`, `uploadedDocuments` заполнен. Polling **не**
+  ///   запускаем.
   Future<void> start({
     required String name,
     String? description,
     required List<File> files,
     Map<String, dynamic>? config,
   }) async {
-    // Отменяем предыдущий polling, если был.
     await _cancelReadinessSubscription();
 
     AppLogger.info(
       'RagCreationNotifier.start: name="$name", files=${files.length}',
     );
 
-    // ---- Фаза 1: создание набора + загрузка ----
     state = state.copyWith(
       phase: RagCreationPhase.creatingRag,
       name: name,
       files: files,
       error: null,
+      uploadError: null,
+      isPartial: false,
+      uploadedDocuments: const [],
       createdChatId: null,
     );
 
-    RagSet createdSet;
+    CreateRagResult result;
     try {
-      // Переключаем phase на uploadingFiles ПЕРЕД вызовом — чтобы UI
-      // успел показать «Загружаем файлы…». Технически внутри
-      // CreateRagUseCase идёт и create, и upload — но UI переключать
-      // дважды неудобно.
       state = state.copyWith(phase: RagCreationPhase.uploadingFiles);
 
-      createdSet = await _createRagUseCase.execute(
+      result = await _createRagUseCase.execute(
         name: name,
         description: description,
         files: files,
         config: config,
       );
-
-      state = state.copyWith(ragId: createdSet.id, ragSet: createdSet);
-      AppLogger.info(
-        'RagCreationNotifier: набор создан, ragId=${createdSet.id}',
-      );
     } catch (e, stackTrace) {
+      // `create` упал — набора нет. Всё как было.
       _handleError(e, stackTrace, 'Ошибка создания RAG-набора');
       return;
     }
 
-    // ---- Фаза 3: ожидание готовности ----
+    // Записываем данные набора — общие для успеха и частичной загрузки.
+    state = state.copyWith(
+      ragId: result.set.id,
+      ragSet: result.set,
+      uploadedDocuments: result.documents,
+    );
+
+    // ---- Частичная загрузка: не идём в polling ----
+    if (result.isPartial) {
+      AppLogger.warning(
+        'RagCreationNotifier: частичная загрузка набора ${result.set.id}, '
+        'принято ${result.documents.length} из ${files.length}',
+      );
+      state = state.copyWith(
+        phase: RagCreationPhase.failed,
+        isPartial: true,
+        uploadError: result.uploadError?.userMessage,
+      );
+      return;
+    }
+
+    // ---- Полный успех: переходим к polling готовности ----
+    AppLogger.info('RagCreationNotifier: набор создан, ragId=${result.set.id}');
+
     state = state.copyWith(phase: RagCreationPhase.waitingReadiness);
 
     try {
-      await _waitForReadiness(createdSet.id);
+      await _waitForReadiness(result.set.id);
     } catch (e, stackTrace) {
       _handleError(e, stackTrace, 'Ошибка ожидания готовности');
-      return;
     }
   }
 
   /// Создать чат с готовым RAG-набором.
   ///
-  /// Вызывается **после** того, как `phase == ready` и пользователь
-  /// нажал «Открыть чат».
-  ///
-  /// **Что делает:**
-  /// 1. Вызывает `StartRagChatUseCase`.
-  /// 2. Пишет сессию в `sessionProvider` — SSOT.
-  /// 3. Сохраняет `createdChatId` в state.
+  /// Вызывается **в двух случаях:**
+  /// - при `phase: ready` — обычный путь;
+  /// - при `hasPartialResult == true` — «Открыть чат» с частичным набором.
   ///
   /// **Возвращает** `true`, если чат создан успешно.
-  /// **Возвращает** `false`, если ошибка (UI покажет `error`).
   Future<bool> createChat() async {
     final ragId = state.ragId;
     final name = state.name;
@@ -289,7 +290,6 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
       return false;
     }
 
-    // Уже создан — не создаём повторно.
     if (state.createdChatId != null) {
       AppLogger.debug('Чат уже создан: ${state.createdChatId}');
       return true;
@@ -303,7 +303,6 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
         title: name,
       );
 
-      // Пишем в SSOT — sessionProvider.
       _ref
           .read(sessionProvider.notifier)
           .setSession(
@@ -322,12 +321,39 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
     }
   }
 
-  /// Сбросить состояние в `idle`.
+  /// Удалить созданный (возможно — частично) RAG-набор.
   ///
-  /// Используется:
-  /// - при нажатии «Отмена» в UI;
-  /// - при закрытии экрана создания;
-  /// - при возврате из `ready`.
+  /// Используется кнопкой «Удалить набор» при частичной загрузке.
+  /// После удаления — `reset()`, состояние возвращается в `idle`.
+  Future<bool> deleteRagSet() async {
+    final ragId = state.ragId;
+    if (ragId == null) {
+      AppLogger.warning('deleteRagSet вызван без ragId — просто reset');
+      reset();
+      return true;
+    }
+
+    AppLogger.info('RagCreationNotifier.deleteRagSet: ragId=$ragId');
+
+    try {
+      final repo = _ref.read(ragRepositoryProvider);
+      await repo.delete(ragId);
+      AppLogger.info('RagCreationNotifier: набор удалён, ragId=$ragId');
+      reset();
+      return true;
+    } catch (e, stackTrace) {
+      final appException = ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Ошибка удаления RAG-набора',
+        {'ragId': ragId},
+      );
+      _setError(appException.userMessage);
+      return false;
+    }
+  }
+
+  /// Сбросить состояние в `idle`.
   void reset() {
     AppLogger.info('RagCreationNotifier.reset');
     unawaited(_cancelReadinessSubscription());
@@ -341,19 +367,9 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
   }
 
   // ============================================================
-  // 3.3. ПРИВАТНЫЕ МЕТОДЫ — POLLING
+  // 3.3. POLLING
   // ============================================================
 
-  /// Запустить polling готовности и дождаться результата.
-  ///
-  /// **Как работает.** Подписывается на `Stream<RagSet>`
-  /// от `WatchRagReadinessUseCase`. Каждое событие:
-  /// - обновляем `ragSet` в state (для UI — прогресс);
-  /// - если `hasPending == false` — завершаем.
-  ///
-  /// **Ошибка в стриме** — пробрасываем через `throw`.
-  /// **Завершение стрима без `ready`** — это нормально: UseCase
-  /// закрывает стрим **только** когда готово (или ошибка).
   Future<void> _waitForReadiness(String ragId) async {
     final completer = Completer<void>();
 
@@ -382,14 +398,11 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
 
     await completer.future;
 
-    // Проверяем: если дошли сюда без ошибки и стрим закрыт —
-    // значит, набор готов.
     if (state.ragSet != null && !state.ragSet!.hasPending) {
       state = state.copyWith(phase: RagCreationPhase.ready);
     }
   }
 
-  /// Отменить текущую подписку на polling (если есть).
   Future<void> _cancelReadinessSubscription() async {
     if (_readinessSubscription != null) {
       await _readinessSubscription!.cancel();
@@ -398,11 +411,9 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
   }
 
   // ============================================================
-  // 3.4. ПРИВАТНЫЕ МЕТОДЫ — ОБРАБОТКА ОШИБОК
+  // 3.4. ОБРАБОТКА ОШИБОК
   // ============================================================
 
-  /// Обработать ошибку — превратить в `RagException` и записать
-  /// в state.
   void _handleError(Object error, StackTrace stackTrace, String context) {
     final appException = ErrorHandler.handle(error, stackTrace, context, {
       'ragId': state.ragId,
@@ -415,7 +426,6 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
     );
   }
 
-  /// Просто установить сообщение об ошибке.
   void _setError(String message) {
     state = state.copyWith(phase: RagCreationPhase.failed, error: message);
   }
@@ -435,13 +445,11 @@ class RagCreationNotifier extends StateNotifier<RagCreationState> {
 // 4. ПРОВАЙДЕР
 // ============================================================
 
-/// Провайдер `CreateRagUseCase`.
 final createRagUseCaseProvider = Provider<CreateRagUseCase>((ref) {
   final repository = ref.read(ragRepositoryProvider);
   return CreateRagUseCase(repository: repository);
 });
 
-/// Провайдер `WatchRagReadinessUseCase`.
 final watchRagReadinessUseCaseProvider = Provider<WatchRagReadinessUseCase>((
   ref,
 ) {
@@ -449,13 +457,11 @@ final watchRagReadinessUseCaseProvider = Provider<WatchRagReadinessUseCase>((
   return WatchRagReadinessUseCase(repository: repository);
 });
 
-/// Провайдер `StartRagChatUseCase`.
 final startRagChatUseCaseProvider = Provider<StartRagChatUseCase>((ref) {
   final repository = ref.read(chatRepositoryProvider);
   return StartRagChatUseCase(chatRepository: repository);
 });
 
-/// Провайдер для `RagCreationNotifier`.
 final ragCreationProvider =
     StateNotifierProvider<RagCreationNotifier, RagCreationState>((ref) {
       return RagCreationNotifier(

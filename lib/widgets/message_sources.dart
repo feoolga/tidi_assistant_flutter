@@ -72,7 +72,7 @@ class _MessageSourcesState extends State<MessageSources> {
             Icon(Icons.menu_book_outlined, size: 16, color: AppTheme.primary),
             const SizedBox(width: 6),
             Text(
-              'Источники (${widget.sources.length})',
+              'Проанализированные источники (${widget.sources.length})',
               style: const TextStyle(
                 fontSize: 13,
                 color: AppTheme.primary,
