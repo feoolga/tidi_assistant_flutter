@@ -275,7 +275,69 @@ void main() {
   );
 
   // ============================================================
-  // ТЕСТ 4: create упал → исключение летит наружу
+  // ТЕСТ 4: частичная загрузка + get упал → fallback на createdSet
+  // ============================================================
+
+  test('частичная загрузка + get 500 → set = createdSet (fallback), '
+      'documents перечитаны', () async {
+    final file = createTempFile(filename: 'файл.pdf');
+    addTearDown(() => cleanupTempFile(file));
+
+    final mockClient = MockClient((request) async {
+      final path = request.url.path;
+      final method = request.method;
+
+      // create — отдаём набор со статусом empty (это fallback).
+      if (method == 'POST' && path.endsWith('/rags')) {
+        return jsonResponse(
+          jsonEncode(ragSetJson(id: 'rag-99', status: 'empty')),
+          201,
+        );
+      }
+      // uploadDocuments → 502 (частичная загрузка)
+      if (method == 'POST' && path.endsWith('/documents')) {
+        return jsonResponse(errorJson('MinerU упал'), 502);
+      }
+      // get → 500 (падение, должен сработать fallback)
+      if (method == 'GET' && path.endsWith('/rags/rag-99')) {
+        return jsonResponse(errorJson('server error'), 500);
+      }
+      // listDocuments → успех
+      if (method == 'GET' && path.endsWith('/rags/rag-99/documents')) {
+        return jsonResponse(
+          jsonEncode({
+            'data': [
+              ragDocumentJson(
+                id: 'doc-keep',
+                filename: 'сохранили.pdf',
+                status: 'success',
+              ),
+            ],
+          }),
+        );
+      }
+
+      return jsonResponse('{"error":{"message":"unexpected"}}', 500);
+    });
+
+    final useCase = makeUseCase(mockClient);
+    final result = await useCase.execute(name: 'Регламенты', files: [file]);
+
+    // Главное: use-case НЕ упал, несмотря на get 500.
+    expect(result.isPartial, isTrue);
+    expect(result.uploadError, isNotNull);
+
+    // Fallback сработал: set == createdSet (status: empty).
+    expect(result.set.id, 'rag-99');
+    expect(result.set.status.name, 'empty');
+
+    // documents перечитаны успешно, несмотря на падение get.
+    expect(result.documents.length, 1);
+    expect(result.documents.first.filename, 'сохранили.pdf');
+  });
+
+  // ============================================================
+  // ТЕСТ 5: create упал → исключение летит наружу
   // ============================================================
 
   test('create вернул 400 → исключение наружу (не partial)', () async {
@@ -298,7 +360,7 @@ void main() {
   });
 
   // ============================================================
-  // ТЕСТ 5: валидация — пустое имя, до сети не доходит
+  // ТЕСТ 6: валидация — пустое имя, до сети не доходит
   // ============================================================
 
   test('пустое имя → ArgumentError, HTTP-запрос не идёт', () async {
@@ -323,7 +385,7 @@ void main() {
   });
 
   // ============================================================
-  // ТЕСТ 6: валидация — пустой список файлов
+  // ТЕСТ 7: валидация — пустой список файлов
   // ============================================================
 
   test('пустой список файлов → ArgumentError', () async {
@@ -340,7 +402,7 @@ void main() {
   });
 
   // ============================================================
-  // ТЕСТ 7: валидация — неподдерживаемый формат
+  // ТЕСТ 8: валидация — неподдерживаемый формат
   // ============================================================
 
   test('неподдерживаемый формат → RagException.unsupportedFormat', () async {
@@ -366,7 +428,7 @@ void main() {
   });
 
   // ============================================================
-  // ТЕСТ 8: валидация — слишком большой файл
+  // ТЕСТ 9: валидация — слишком большой файл
   // ============================================================
 
   test('файл больше лимита → RagException.fileTooLarge', () async {
