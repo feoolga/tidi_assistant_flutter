@@ -22,9 +22,6 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final isFromUser = message.isFromUser;
 
-    final bool showTypingIndicator =
-        !isFromUser && message.text.isEmpty && isStreaming;
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 16.0),
       child: Row(
@@ -32,106 +29,153 @@ class MessageBubble extends StatelessWidget {
             ? MainAxisAlignment.end
             : MainAxisAlignment.start,
         children: [
-          // Контейнер сообщения
-          Container(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.75,
-            ),
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16.0,
-              vertical: 12.0,
-            ),
-            decoration: BoxDecoration(
-              // Цвет как в web-версии
-              color: isFromUser
-                  ? AppTheme
-                        .primaryLight // #F2FBFA - фон пользователя
-                  : Colors.white, // Белый - фон AI
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(16.0),
-                topRight: const Radius.circular(16.0),
-                bottomLeft: isFromUser
-                    ? const Radius.circular(16.0)
-                    : const Radius.circular(4.0),
-                bottomRight: isFromUser
-                    ? const Radius.circular(4.0)
-                    : const Radius.circular(16.0),
+          // Контейнер сообщения.
+          //
+          // **Ширина — разная для user и AI.**
+          // - User: пузырь по содержимому, но не шире 75% ширины экрана.
+          //   Так он выглядит компактно и «прижат» к правому краю —
+          //   привычный паттерн мессенджеров.
+          // - AI: пузырь **на всю ширину родителя** (по требованию техдира).
+          //   Оборачиваем в `Expanded` — это виджет, который внутри `Row`
+          //   говорит: «займи всё оставшееся место». Без `Expanded`
+          //   `Container` сам не растянется — он по умолчанию «по содержимому».
+          //
+          // **Почему не через `maxWidth` для AI.** Потолок `maxWidth` **не
+          // растягивает** `Container` — он лишь ограничивает сверху. Если
+          // AI-сообщение короткое — пузырь останется узким, а нужен
+          // полноширинный. Поэтому для AI — `Expanded`, для user — `maxWidth`.
+          if (isFromUser)
+            Container(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.75,
               ),
-              // Тень как в web
-              boxShadow: isFromUser
-                  ? [] // У пользователя нет тени
-                  : [
-                      BoxShadow(
-                        color: Colors.grey.withValues(alpha: 0.1),
-                        spreadRadius: 1,
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-              // Бордер как в web
-              border: isFromUser
-                  ? Border.all(
-                      color: AppTheme.primary.withValues(alpha: 0.3),
-                      width: 1.0,
-                    )
-                  : null,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 12.0,
+              ),
+              decoration: _buildBubbleDecoration(isFromUser),
+              child: _buildBubbleContent(context),
+            )
+          else
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16.0,
+                  vertical: 12.0,
+                ),
+                decoration: _buildBubbleDecoration(isFromUser),
+                child: _buildBubbleContent(context),
+              ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Текст или индикатор набора.
-                if (showTypingIndicator)
-                  const TypingIndicator()
-                else if (message.text.isNotEmpty)
-                  Text(
-                    message.text,
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
-                      fontSize: 16,
-                      height: 1.4,
-                    ),
-                  ),
-
-                // Вложения — если есть. Идут под текстом, над временем.
-                if (message.attachments.isNotEmpty) ...[
-                  if (showTypingIndicator || message.text.isNotEmpty)
-                    const SizedBox(height: 8),
-                  _buildAttachments(message.attachments),
-                ],
-
-                // Sources — только у AI, только если непустые.
-                // `document_chat` кладёт их в само сообщение,
-                // `agentic_rag` — догружает отдельной ручкой (см.
-                // `ChatNotifier._loadSourcesForMessage`). Здесь UI
-                // просто показывает то, что уже есть в `Message`.
-                if (!isFromUser &&
-                    message.sources != null &&
-                    message.sources!.isNotEmpty) ...[
-                  if (showTypingIndicator ||
-                      message.text.isNotEmpty ||
-                      message.attachments.isNotEmpty)
-                    const SizedBox(height: 4),
-                  MessageSources(sources: message.sources!),
-                ],
-
-                const SizedBox(height: 4),
-
-                // Время.
-                if (!showTypingIndicator)
-                  Text(
-                    formatTime(message.timestamp),
-                    style: TextStyle(
-                      color: isFromUser
-                          ? AppTheme.textSecondary.withValues(alpha: 0.7)
-                          : AppTheme.textSecondary.withValues(alpha: 0.5),
-                      fontSize: 10,
-                    ),
-                  ),
-              ],
-            ),
-          ),
         ],
       ),
+    );
+  }
+
+  /// Decoration пузыря — одинаковый для user и AI, кроме цвета/тени/бордера.
+  ///
+  /// Вынесено в отдельный метод, потому что эта часть **не зависит**
+  /// от `Expanded`/`Container` обёртки — а значит, логично её
+  /// переиспользовать, не дублируя.
+  BoxDecoration _buildBubbleDecoration(bool isFromUser) {
+    return BoxDecoration(
+      // Цвет как в web-версии
+      color: isFromUser
+          ? AppTheme
+                .primaryLight // #F2FBFA - фон пользователя
+          : Colors.white, // Белый - фон AI
+      borderRadius: BorderRadius.only(
+        topLeft: const Radius.circular(16.0),
+        topRight: const Radius.circular(16.0),
+        bottomLeft: isFromUser
+            ? const Radius.circular(16.0)
+            : const Radius.circular(4.0),
+        bottomRight: isFromUser
+            ? const Radius.circular(4.0)
+            : const Radius.circular(16.0),
+      ),
+      // Тень как в web
+      boxShadow: isFromUser
+          ? [] // У пользователя нет тени
+          : [
+              BoxShadow(
+                color: Colors.grey.withValues(alpha: 0.1),
+                spreadRadius: 1,
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+      // Бордер как в web
+      border: isFromUser
+          ? Border.all(
+              color: AppTheme.primary.withValues(alpha: 0.3),
+              width: 1.0,
+            )
+          : null,
+    );
+  }
+
+  /// Содержимое пузыря — текст, вложения, источники, время.
+  ///
+  /// Вынесено из `build` по той же причине: эта часть **не зависит**
+  /// от того, обёрнут ли контейнер в `Expanded` или нет.
+  Widget _buildBubbleContent(BuildContext context) {
+    final isFromUser = message.isFromUser;
+    final bool showTypingIndicator =
+        !isFromUser && message.text.isEmpty && isStreaming;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Текст или индикатор набора.
+        if (showTypingIndicator)
+          const TypingIndicator()
+        else if (message.text.isNotEmpty)
+          Text(
+            message.text,
+            style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 16,
+              height: 1.4,
+            ),
+          ),
+
+        // Вложения — если есть. Идут под текстом, над временем.
+        if (message.attachments.isNotEmpty) ...[
+          if (showTypingIndicator || message.text.isNotEmpty)
+            const SizedBox(height: 8),
+          _buildAttachments(message.attachments),
+        ],
+
+        // Sources — только у AI, только если непустые.
+        // `document_chat` кладёт их в само сообщение,
+        // `agentic_rag` — догружает отдельной ручкой (см.
+        // `ChatNotifier._loadSourcesForMessage`). Здесь UI
+        // просто показывает то, что уже есть в `Message`.
+        if (!isFromUser &&
+            message.sources != null &&
+            message.sources!.isNotEmpty) ...[
+          if (showTypingIndicator ||
+              message.text.isNotEmpty ||
+              message.attachments.isNotEmpty)
+            const SizedBox(height: 4),
+          MessageSources(sources: message.sources!),
+        ],
+
+        const SizedBox(height: 4),
+
+        // Время.
+        if (!showTypingIndicator)
+          Text(
+            formatTime(message.timestamp),
+            style: TextStyle(
+              color: isFromUser
+                  ? AppTheme.textSecondary.withValues(alpha: 0.7)
+                  : AppTheme.textSecondary.withValues(alpha: 0.5),
+              fontSize: 10,
+            ),
+          ),
+      ],
     );
   }
 
