@@ -12,6 +12,7 @@ import '../providers/chat_provider.dart';
 import '../providers/session_provider.dart';
 import '../screens/create_rag_screen.dart';
 import '../theme/app_theme.dart';
+import 'app_snack_bar.dart';
 
 class ChatHistoryDrawer extends ConsumerStatefulWidget {
   /// Колбэк выбора чата из списка.
@@ -263,21 +264,10 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
       // виджет мог быть удалён (пользователь закрыл drawer, ушёл
       // на другой экран). Без проверки — краш.
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ Чат переименован'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      AppSnackBar.showInfo(context, 'Чат переименован');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ ${ErrorHandler.getUserMessage(e)}'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      AppSnackBar.showError(context, ErrorHandler.getUserMessage(e));
     }
   }
 
@@ -337,21 +327,10 @@ class _ChatHistoryDrawerState extends ConsumerState<ChatHistoryDrawer> {
 
       // 6. Подтверждение.
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('🗑 Чат удалён'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      AppSnackBar.showInfo(context, 'Чат удалён');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ ${ErrorHandler.getUserMessage(e)}'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      AppSnackBar.showError(context, ErrorHandler.getUserMessage(e));
     }
   }
 
