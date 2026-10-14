@@ -8,6 +8,7 @@ import '../providers/attachment_draft_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_snack_bar.dart';
 import '../widgets/chat_history_drawer.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
@@ -125,13 +126,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ref.listen<String?>(chatProvider.select((s) => s.error), (previous, next) {
       if (next == null || next.isEmpty) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ $next'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      AppSnackBar.showError(context, next);
       // Очищаем ошибку после показа — чтобы `SnackBar` не показался
       // повторно при следующем изменении state.
       ref.read(chatProvider.notifier).clearError();
@@ -150,13 +145,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ) {
       if (next == null || next.isEmpty) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ $next'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      AppSnackBar.showError(context, next);
       // Очищаем — иначе при следующем изменении state `SnackBar`
       // покажется снова.
       ref.read(attachmentDraftProvider.notifier).clearError();
@@ -172,13 +161,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ) {
       if (next == null || next.isEmpty) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('ℹ️ $next'),
-          backgroundColor: AppTheme.primary,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      AppSnackBar.showInfo(context, next);
       ref.read(attachmentDraftProvider.notifier).clearInfoMessage();
     });
 
