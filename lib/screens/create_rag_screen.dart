@@ -10,6 +10,7 @@ import '../core/errors/error_handler.dart';
 import '../core/logger/app_logger.dart';
 import '../providers/rag_creation_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_snack_bar.dart';
 import '../widgets/attachment_picker_helper.dart';
 import '../widgets/rag_creation_progress.dart';
 
@@ -98,14 +99,19 @@ class _CreateRagScreenState extends ConsumerState<CreateRagScreen> {
 
       if (picked.isEmpty) return;
 
+      // После `await` виджет мог быть удалён (пользователь ушёл
+      // с экрана, пока открывался системный диалог выбора файлов).
+      // Проверяем `mounted` перед показом SnackBar и изменением state.
+      if (!mounted) return;
+
       // Считаем, сколько ещё можно добавить.
       final currentCount = _selectedFiles.length;
       final availableSlots = AppConfig.ragMaxFilesPerBatch - currentCount;
 
       if (availableSlots <= 0) {
-        _showSnackBar(
+        AppSnackBar.showError(
+          context,
           'Уже выбрано ${AppConfig.ragMaxFilesPerBatch} файлов — максимум',
-          isError: true,
         );
         return;
       }
@@ -118,10 +124,10 @@ class _CreateRagScreenState extends ConsumerState<CreateRagScreen> {
       });
 
       if (skipped > 0) {
-        _showSnackBar(
+        AppSnackBar.showError(
+          context,
           'Добавлено ${toAdd.length}. Пропущено $skipped — превышен '
           'лимит ${AppConfig.ragMaxFilesPerBatch} файлов.',
-          isError: true,
         );
       }
     } catch (e, stackTrace) {
@@ -130,7 +136,10 @@ class _CreateRagScreenState extends ConsumerState<CreateRagScreen> {
         stackTrace,
         'Ошибка выбора файлов для RAG',
       );
-      _showSnackBar(appException.userMessage, isError: true);
+
+      // После `await` виджет мог быть удалён — проверяем `mounted`.
+      if (!mounted) return;
+      AppSnackBar.showError(context, appException.userMessage);
     } finally {
       if (mounted) setState(() => _isPickingFiles = false);
     }
@@ -154,12 +163,13 @@ class _CreateRagScreenState extends ConsumerState<CreateRagScreen> {
     final name = _nameController.text.trim();
     final description = _descriptionController.text.trim();
 
+    // Валидация — синхронная, `await` ещё не было, `mounted` не нужен.
     if (name.isEmpty) {
-      _showSnackBar('Введите имя набора', isError: true);
+      AppSnackBar.showError(context, 'Введите имя набора');
       return;
     }
     if (_selectedFiles.isEmpty) {
-      _showSnackBar('Выберите хотя бы один файл', isError: true);
+      AppSnackBar.showError(context, 'Выберите хотя бы один файл');
       return;
     }
 
@@ -208,21 +218,6 @@ class _CreateRagScreenState extends ConsumerState<CreateRagScreen> {
   }
 
   // ============================================================
-  // ВСПОМОГАТЕЛЬНЫЕ
-  // ============================================================
-
-  void _showSnackBar(String message, {bool isError = false}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(isError ? '❌ $message' : 'ℹ️ $message'),
-        backgroundColor: isError ? Colors.red : AppTheme.primary,
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
-
-  // ============================================================
   // BUILD
   // ============================================================
 
@@ -240,7 +235,7 @@ class _CreateRagScreenState extends ConsumerState<CreateRagScreen> {
       next,
     ) {
       if (next == null || next.isEmpty) return;
-      _showSnackBar(next, isError: true);
+      AppSnackBar.showError(context, next);
       ref.read(ragCreationProvider.notifier).clearError();
     });
 
