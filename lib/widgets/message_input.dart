@@ -7,6 +7,7 @@ import '../core/logger/app_logger.dart';
 import '../providers/attachment_draft_provider.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
+import 'app_snack_bar.dart';
 import 'attachment_picker_helper.dart';
 import 'attachment_preview.dart';
 
@@ -86,13 +87,10 @@ class _MessageInputState extends ConsumerState<MessageInput> {
     // иначе сообщение уйдёт без файла, и пользователь не поймёт, почему
     // AI его «не увидел».
     if (hasAttachments && !draftState.allAttachmentsReady) {
-      // Показываем подсказку — иначе пользователь подумает, что кнопка сломана.
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Дождитесь загрузки файлов'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      // Показываем нейтральную подсказку — пользователь нажал
+      // «Отправить» раньше времени, это не ошибка, а **подсказка**
+      // «подожди немного». Красный цвет (ошибки) был бы **пугающим**.
+      AppSnackBar.showInfo(context, 'Дождитесь загрузки файлов');
       return;
     }
 
@@ -123,14 +121,10 @@ class _MessageInputState extends ConsumerState<MessageInput> {
       // Ошибка открытия диалога — показываем локально,
       // потому что в attachmentDraftProvider эта ошибка не попадает
       // (это ошибка на этапе выбора файла, до загрузки).
+      //
+      // После `await` виджет мог быть удалён — проверяем `mounted`.
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ ${e.userMessage}'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      AppSnackBar.showError(context, e.userMessage);
     } catch (e, stackTrace) {
       AppLogger.logException(
         'Неожиданная ошибка при выборе файла',
