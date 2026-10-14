@@ -86,13 +86,22 @@ class ChatStreamHandler {
         }
       },
       onDone: () {
+        // `onDone` приходит, когда source **закрылся сам** (не через
+        // ошибку). Если при этом мы **не получили** финального
+        // `ChatStreamCompleted` (`isCompleted == false`) — это
+        // нештатное завершение: поток **закончился без терминатора**
+        // `response.completed`.
+        //
+        // **Что использовать.** `streamEndedUnexpectedly` — **не**
+        // `streamError`. Разница: `streamError` = сервер **ответил**
+        // ошибкой через `event: error`; `streamEndedUnexpectedly` =
+        // сервер **промолчал**, поток закрылся сам. Разные причины —
+        // разные `code` — разные `userMessage`.
         if (!isCompleted && !isClosed) {
           AppLogger.warning('Поток завершился без ChatStreamCompleted');
           controller.add(
             ChatStreamFailed(
-              error: BusinessException.streamError(
-                'Поток завершился без финального события',
-              ),
+              error: BusinessException.streamEndedUnexpectedly(),
             ),
           );
         }
