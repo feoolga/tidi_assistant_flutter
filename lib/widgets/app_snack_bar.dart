@@ -53,12 +53,25 @@ class AppSnackBar {
   static void showError(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('❌ $message'),
+        // Иконка слева — **круг с восклицательным знаком**
+        //
+        // `Row` + `Expanded` вокруг текста — чтобы длинное сообщение
+        // **переносилось** на следующую строку, а не обрезалось.
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
         backgroundColor: Colors.red,
-        // Крестик в углу — пользователь закроет сам.
-        // `SnackBar` с `showCloseIcon: true` сам обрабатывает нажатие.
+        // Крестик закрытия — **оставляем**. Он **нужен**: SnackBar
+        // «висит» до явного закрытия (`duration: 1 день`).
+        // Единственный крестик на экране — не путает.
         showCloseIcon: true,
-        // «Вечно» — фактически. См. комментарий выше.
+        // Крестик тоже белый — чтобы контрастировал с красным фоном
+        // и совпадал с иконкой и текстом.
+        closeIconColor: Colors.white,
         duration: const Duration(days: 1),
       ),
     );
@@ -83,7 +96,15 @@ class AppSnackBar {
   static void showInfo(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('ℹ️ $message'),
+        // Иконка слева — `i` в круге (`Icons.info_outline`).
+        // Material-иконка — **единый** стиль на **всех** платформах.
+        content: Row(
+          children: [
+            const Icon(Icons.info_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
         backgroundColor: AppTheme.primary,
         duration: const Duration(seconds: 3),
       ),

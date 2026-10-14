@@ -7,7 +7,6 @@ import '../core/logger/app_logger.dart';
 import '../providers/attachment_draft_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/session_provider.dart';
-import '../theme/app_theme.dart';
 import '../widgets/app_snack_bar.dart';
 import '../widgets/chat_history_drawer.dart';
 import '../widgets/message_bubble.dart';
