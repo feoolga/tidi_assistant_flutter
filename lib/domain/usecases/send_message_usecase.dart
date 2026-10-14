@@ -2,11 +2,13 @@
 
 import 'dart:async';
 
+import '../../core/config/app_config.dart';
 import '../../core/errors/app_exception.dart';
 import '../../core/errors/business_exceptions.dart';
 import '../../core/errors/error_handler.dart';
 import '../../core/logger/app_logger.dart';
 import '../../core/network/sse_parser.dart';
+import '../../core/utils/stream_with_inactivity_timeout.dart';
 import '../../data/models/chat_response_dto.dart';
 import '../../data/repositories/chat_repository.dart';
 import '../models/attachment.dart';
@@ -122,8 +124,30 @@ class SendMessageUseCase {
         attachments: params.attachments,
       );
 
-      // 2. Парсим SSE-поток.
-      final eventStream = SseParser.parse(response);
+      // 2. Парсим SSE-поток и оборачиваем watchdog'ом.
+      //
+      // `SseParser.parse` даёт «сырой» поток событий (включая
+      // служебный heartbeat-маркер `_heartbeat` — см. `SseParser`).
+      // `withInactivityTimeout` оборачивает его так: если за
+      // `AppConfig.streamInactivityTimeout` (60 секунд) не придёт
+      // **ни одного** события — стрим закроется ошибкой
+      // `NetworkException.timeout`.
+      //
+      // **Почему именно здесь.** Мы оборачиваем **до** `await for`:
+      // цикл ниже «сядет» на **этот** стрим, и watchdog будет
+      // работать **над** циклом. Если обернуть **после** — цикл уже
+      // будет читать исходный стрим, и watchdog не вклинится.
+      //
+      // **Heartbeat продлевает жизнь.** `SseParser` эмитит
+      // `{'_event_type': '_heartbeat'}` на каждую строку `: ping`.
+      // Watchdog **сбрасывает** таймер на **каждом** событии — значит,
+      // heartbeat тоже продлевает. Так и задумано: сервер шлёт
+      // `: ping` каждые ~15 секунд (`agentic_rag`) — значит, пока
+      // сервер думает, watchdog **не срабатывает**. Сработает только
+      // при **реальном** обрыве.
+      final eventStream = SseParser.parse(
+        response,
+      ).withInactivityTimeout(AppConfig.streamInactivityTimeout);
 
       // 3. Переменные для сборки ответа.
       String fullText = '';
@@ -145,13 +169,20 @@ class SendMessageUseCase {
         // Раньше `response.in_progress` **не** был в списке — он попадал в
         // финальный `AppLogger.debug('Пропущено SSE-событие: ...')` и создавал
         // шум в логах.
+        // `_heartbeat` — служебный маркер от `SseParser`, эмитится
+        // на каждую строку `: ping` от сервера. Он **не несёт**
+        // полезной нагрузки для логики, но нужен **watchdog'у**
+        // (`.withInactivityTimeout`) — чтобы тот знал, что сервер жив,
+        // и **не срабатывал** зря во время «раздумий» RAG-агента.
+        // Здесь его **пропускаем** вместе с другими служебными.
         if (eventType == 'response.created' ||
             eventType == 'response.in_progress' ||
             eventType == 'response.output_item.added' ||
             eventType == 'response.content_part.added' ||
             eventType == 'response.output_text.done' ||
             eventType == 'response.content_part.done' ||
-            eventType == 'response.output_item.done') {
+            eventType == 'response.output_item.done' ||
+            eventType == '_heartbeat') {
           continue;
         }
 
