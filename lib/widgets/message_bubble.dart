@@ -7,6 +7,7 @@ import 'attachment_preview.dart';
 import 'typing_indicator.dart';
 import '../core/utils/date_format.dart';
 import 'message_sources.dart';
+import '../domain/models/message_status.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -127,9 +128,29 @@ class MessageBubble extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Текст или индикатор набора.
+        // Текст, индикатор набора или пометка об ошибке.
+        //
+        // **Три сценария — в порядке приоритета:**
+        // 1. Стрим идёт, текста нет → «typing indicator» (точки);
+        // 2. Сообщение упало (status == failed) → пометка об ошибке;
+        // 3. Обычный текст → просто текст.
+        //
+        // **Почему `failed` — до `text.isNotEmpty`.** У failed-сообщений
+        // `text` **пустой** (сервер прервал генерацию). Если проверять
+        // текст первым — failed «утонет» в пустоте и покажется пустой
+        // пузырь с одним временем. Это и было проблемой на стенде.
+        //
+        // **Почему `failed` — после `showTypingIndicator`.** Если идёт
+        // **текущий** стрим (пользователь только что отправил), а
+        // предыдущее сообщение в истории оказалось failed — мы **не**
+        // хотим, чтобы «typing indicator» перекрывался пометкой
+        // об ошибке. `showTypingIndicator` привязан к **последнему**
+        // пустому AI-сообщению — если оно **не** failed (стрим идёт),
+        // покажем точки. Если failed — покажем ошибку.
         if (showTypingIndicator)
           const TypingIndicator()
+        else if (message.status == MessageStatus.failed)
+          _buildFailedContent()
         else if (message.text.isNotEmpty)
           Text(
             message.text,
@@ -175,6 +196,54 @@ class MessageBubble extends StatelessWidget {
               fontSize: 10,
             ),
           ),
+      ],
+    );
+  }
+
+  /// Пометка о неудачной генерации ответа.
+  ///
+  /// Показывается, когда `message.status == MessageStatus.failed` —
+  /// сервер **не смог** получить ответ (типичный случай —
+  /// `client_disconnected` при обрыве SSE-стрима).
+  ///
+  /// **Что делаем:**
+  /// - иконка ⚠ (`Icons.error_outline`) — **мягкий** сигнал, не красный;
+  /// - текст «Не удалось получить ответ. Проверьте подключение
+  ///   к интернету» — объясняет **причину** и **что делать**;
+  /// - цвет — `AppTheme.textSecondary` (серый), **не** красный —
+  ///   чтобы **не пугать** пользователя (это **не** критическая
+  ///   ошибка его действий).
+  ///
+  /// **Что НЕ делаем:**
+  /// - **не** показываем `message.errorMessage` (типа
+  ///   `"client_disconnected"`) — это **техническая** деталь, она
+  ///   остаётся в логах;
+  /// - **не** показываем кнопку «Повторить» — это **следующая** итерация
+  ///   (в беклоге, после показа);
+  /// - **не** меняем фон/рамку пузыря — только содержимое.
+  Widget _buildFailedContent() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          Icons.error_outline,
+          size: 18,
+          // Мягкий серый, а не красный — чтобы не пугать.
+          color: AppTheme.textSecondary,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Не удалось получить ответ. '
+            'Проверьте подключение к интернету.',
+            style: TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 14,
+              height: 1.4,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ),
       ],
     );
   }

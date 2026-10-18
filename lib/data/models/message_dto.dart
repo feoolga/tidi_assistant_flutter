@@ -20,68 +20,40 @@ import '../../domain/models/message_source.dart';
 ///
 /// Используется только для парсинга данных, НЕ содержит бизнес-логики.
 class MessageDto {
-  // ============================================================
-  // 1. ПОЛЯ — ТОЧНО КАК В JSON
-  // ============================================================
-
-  /// Уникальный ID сообщения (UUID).
-  ///
-  /// У ассистентских сообщений совпадает с ID ответа в формате
-  /// Responses (`resp_<uuid>`) без префикса — используется для
-  /// повторного чтения, фидбэка и источников.
+  // 1. ПОЛЯ
   final String id;
-
-  /// Текст сообщения.
-  ///
-  /// В JSON называется `content`. Хранится как `text` — так удобнее
-  /// в домене (не путать с `content`-массивами в других API).
   final String text;
-
-  /// `true` — сообщение от пользователя, `false` — от AI.
-  ///
-  /// В JSON — поле `role: "user" | "assistant"`.
   final bool isFromUser;
-
-  /// Время создания сообщения.
-  ///
-  /// В JSON — `created_at` (ISO-8601, строкой).
   final DateTime timestamp;
-
-  /// Источники, использованные AI при генерации ответа.
-  ///
-  /// **Два формата от разных агентов:**
-  /// - `document_chat` — массив строк: `["накладная.pdf", ...]`;
-  /// - `agentic_rag` — массив объектов с метаданными
-  ///   (`{"order":1, "chunk_id":"...", ..., "filename":"..."}`).
-  ///
-  /// Маппер приводит оба формата к `List<MessageSource>`.
   final List<MessageSource>? sources;
-
-  /// Оценка пользователя для ассистентского сообщения.
-  ///
-  /// Формат: `{"vote": 1 | -1 | null, "comment": "..." | null}`
-  /// или `null`, если оценки нет.
-  ///
-  /// Для сообщений пользователя — всегда `null`.
   final Map<String, dynamic>? feedback;
-
-  /// ID агента, который ответил (только для сообщений AI).
-  ///
-  /// **В README не упоминается.** Возможно, бэкенд присылает его
-  /// в каких-то случаях; возможно — нет. Парсим как `String?` —
-  /// безопасно: если поля нет, будет `null`.
-  ///
-  /// Используется в `Message` для контекста, но UI его не показывает.
   final String? agentId;
-
-  /// ID сессии (чата) на бэкенде (только для сообщений AI).
-  ///
-  /// **В README не упоминается.** См. комментарий к [agentId].
   final String? sessionId;
 
-  // ============================================================
-  // 2. КОНСТРУКТОР
-  // ============================================================
+  /// Статус сообщения — из поля `status` ответа сервера.
+  ///
+  /// Возможные значения (по README Agentic RAG и реальному ответу сервера):
+  /// - `"ok"` — сообщение успешно обработано;
+  /// - `"failed"` — генерация упала (например, `client_disconnected`
+  ///   при обрыве SSE-стрима);
+  /// - `"pending"` — сообщение ещё обрабатывается (обычно не приходит
+  ///   в `GET .../messages`, но на всякий случай парсим как есть).
+  ///
+  /// `null` — если поле не пришло (например, `document_chat` может
+  /// не присылать `status` в истории — у него своя схема).
+  ///
+  /// **Почему `String?`, а не enum.** DTO — зеркало JSON. Превращение
+  /// в доменный enum — работа маппера (D2), не DTO. DTO **не решает**,
+  /// что считать «успехом», — он просто **хранит** то, что пришло.
+  final String? status;
+
+  /// Текст ошибки — из поля `error` ответа сервера.
+  ///
+  /// Например, `"client_disconnected"` — сервер прервал генерацию,
+  /// потому что клиент отвалился. Или `null`, если ошибки нет.
+  ///
+  /// `null` — если поля нет или оно `null`.
+  final String? error;
 
   const MessageDto({
     required this.id,
@@ -92,6 +64,8 @@ class MessageDto {
     this.feedback,
     this.agentId,
     this.sessionId,
+    this.status,
+    this.error,
   });
 
   // ============================================================
@@ -162,6 +136,9 @@ class MessageDto {
       feedback: json['feedback'] as Map<String, dynamic>?,
       agentId: json['agentId'] as String?,
       sessionId: json['sessionId'] as String?,
+      // --- НОВОЕ ---
+      status: json['status'] as String?,
+      error: json['error'] as String?,
     );
   }
 
@@ -207,6 +184,7 @@ class MessageDto {
   @override
   String toString() {
     return 'MessageDto(id: $id, isFromUser: $isFromUser, '
-        'textLength: ${text.length}, sources: $sources)';
+        'textLength: ${text.length}, sources: $sources, '
+        'status: $status, error: $error)';
   }
 }

@@ -2,6 +2,7 @@
 
 import 'attachment.dart';
 import 'message_source.dart';
+import 'message_status.dart';
 
 /// Модель сообщения в чате.
 /// Используется как для сообщений пользователя, так и для ответов AI.
@@ -62,6 +63,37 @@ class Message {
   /// Формат: `{"vote": 1 | -1 | null, "comment": "..." | null}` или `null`.
   final Map<String, dynamic>? feedback;
 
+  /// Статус сообщения — по данным сервера.
+  ///
+  /// **Зачем нужен.** Сервер может вернуть сообщение с `status: "failed"`
+  /// — например, если SSE-стрим оборвался (`client_disconnected`).
+  /// В таком случае `text` **пустой**, и без визуальной пометки
+  /// пользователь увидит «пустой пузырь» и не поймёт, что произошло.
+  ///
+  /// **Тип — не nullable.** Всегда есть **какой-то** статус:
+  /// - `ok` — по умолчанию (если сервер не сказал обратного);
+  /// - `failed` — генерация упала;
+  /// - `pending` — обрабатывается.
+  ///
+  /// **Источник:** поле `status` из `GET .../messages`
+  /// (см. README Agentic RAG). Для `document_chat` `status` **не**
+  /// приходит — маппер поставит `ok` по умолчанию, и это корректно.
+  final MessageStatus status;
+
+  /// Текст ошибки, если `status == MessageStatus.failed`. Иначе `null`.
+  ///
+  /// **Пример значения:** `"client_disconnected"` — сервер прервал
+  /// генерацию, потому что клиент отвалился от SSE-стрима. Значение
+  /// **техническое** — для отладки и логов, **не** для показа
+  /// пользователю напрямую. UI показывает общий текст
+  /// «Не удалось получить ответ».
+  ///
+  /// **Имя `errorMessage`, а не `error`.** Согласовано с полем
+  /// `Attachment.errorMessage` — «текст ошибки, привязанный к сущности».
+  /// В DTO поле называется `error` (зеркало JSON), а в домене —
+  /// `errorMessage` (смысловое имя). Переименование — в маппере.
+  final String? errorMessage;
+
   // ============================================================
   // МАРКЕР ДЛЯ copyWith
   // ============================================================
@@ -85,6 +117,8 @@ class Message {
     this.attachments = const [],
     this.sources,
     this.feedback,
+    this.status = MessageStatus.ok,
+    this.errorMessage,
   });
 
   // ------------------------------------------------------------
@@ -174,6 +208,8 @@ class Message {
       if (sessionId != null) 'sessionId': sessionId,
       if (sources != null) 'sources': sources,
       if (feedback != null) 'feedback': feedback,
+      if (status != MessageStatus.ok) 'status': status.name,
+      if (errorMessage != null) 'errorMessage': errorMessage,
     };
   }
 
@@ -196,6 +232,8 @@ class Message {
     List<Attachment>? attachments,
     Object? sources = _unset,
     Object? feedback = _unset,
+    MessageStatus? status,
+    Object? errorMessage = _unset,
   }) {
     return Message(
       id: id ?? this.id,
@@ -213,6 +251,10 @@ class Message {
       feedback: identical(feedback, _unset)
           ? this.feedback
           : feedback as Map<String, dynamic>?,
+      status: status ?? this.status,
+      errorMessage: identical(errorMessage, _unset)
+          ? this.errorMessage
+          : errorMessage as String?,
     );
   }
 
