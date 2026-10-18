@@ -1,5 +1,6 @@
 // lib/core/errors/file_exceptions.dart
 
+import '../config/app_config.dart';
 import 'app_exception.dart';
 
 /// Ошибки, связанные с работой с файлами.
@@ -83,11 +84,23 @@ class FileException extends AppException {
   /// Формат файла не поддерживается.
   ///
   /// Срабатывает, если `file_picker` вернул файл с расширением или MIME,
-  /// которого нет в `AppConfig.documentChatAllowedFileExtensions` / `allowedMimeTypes`.
+  /// которого нет в `AppConfig.allowedFileExtensions` / `allowedMimeTypes`.
+  ///
+  /// **Список разрешённых форматов — из `AppConfig`.**
+  /// Раньше здесь был хардкод `'PDF, JPG, PNG'`, но он **расходился**
+  /// с **реальным** списком в `AppConfig` (там ещё DOCX, TXT, MD).
+  /// Пользователь видел в ошибке один список, а `file_picker`
+  /// показывал другой — путался.
+  ///
+  /// Теперь — **единый источник правды** `AppConfig.allowedFormatsDescription`.
+  /// Добавили новый формат в `AppConfig` — сообщение об ошибке
+  /// **само** обновилось.
   factory FileException.unsupportedFormat({required String mimeType}) {
     return FileException(
       code: 'FILE_UNSUPPORTED_FORMAT',
-      userMessage: 'Формат не поддерживается. Разрешены: PDF, JPG, PNG.',
+      userMessage:
+          'Формат не поддерживается. '
+          'Разрешены: ${AppConfig.allowedFormatsDescription}.',
       technicalDetails: 'Unsupported MIME type: $mimeType',
     );
   }
