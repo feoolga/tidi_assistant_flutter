@@ -762,6 +762,132 @@ class ChatNotifier extends StateNotifier<ChatState> {
     state = state.copyWith(messages: newMessages);
   }
 
+  /// Догрузить sources для **всех** assistant-сообщений истории.
+  ///
+  /// **Зачем нужен.** При `loadChat` (открытие старого RAG-чата
+  /// из истории) сервер **не** отдаёт `sources` в `GET .../messages`
+  /// (см. README Agentic RAG) — только через **отдельную** ручку
+  /// `GET .../chat/completions/{id}/sources`. Значит, без догрузки
+  /// старые ответы в UI **без** «Проанализированные источники».
+  ///
+  /// **Что делает:**
+  /// 1. Фильтрует assistant-сообщения с **непустым** `id`
+  ///    (`resp_...` — это ключ для `getSources`).
+  /// 2. **Параллельно** запрашивает sources для **всех**
+  ///    (через `Future.wait`).
+  /// 3. Собирает `Map<messageId, List<MessageSource>>` —
+  ///    «id → sources».
+  /// 4. **Один раз** обновляет `state.messages`: проходит по
+  ///    сообщениям, подставляет sources **из** Map.
+  ///
+  /// **Почему параллельно.** 10 ответов последовательно = 10 ×
+  /// 200 мс = **2 секунды** ожидания. Параллельно = ~200 мс
+  /// (время **самого долгого**).
+  ///
+  /// **Почему один `state = ...`.** Если обновлять **по одному**
+  /// (через `_updateSourcesForMessage`), параллельные обновления
+  /// **перезапишут** друг друга: каждый **прочитает** старую
+  /// версию `state`, **запишет** свою — **последний** победит,
+  /// **потеряв** чужие sources.
+  ///
+  /// **Что НЕ делает:**
+  /// - **не** блокирует UI (`_setMessages(messages)` **уже**
+  ///   отработал — пользователь **видит** сообщения **сразу**);
+  /// - **не** показывает ошибки (sources — **вторичны**, ошибки
+  ///   **логируем** и **не** роняем);
+  /// - **не** трогает user-сообщения (у них **не** бывает sources).
+  Future<void> _loadSourcesForHistory({
+    required String agentId,
+    required List<Message> messages,
+  }) async {
+    // 1. Найти assistant-сообщения с непустым id.
+    final assistants = messages
+        .where((m) => !m.isFromUser && m.id.isNotEmpty)
+        .toList();
+
+    if (assistants.isEmpty) {
+      AppLogger.debug('Нет assistant-сообщений для догрузки sources');
+      return;
+    }
+
+    AppLogger.info(
+      'Догрузка sources для ${assistants.length} '
+      'assistant-сообщений истории',
+    );
+
+    // 2. Параллельно запросить sources для всех.
+    //    `Future.wait` — запускает все сразу, **ждёт** все.
+    //
+    //    Ошибки **не** пробрасываем наружу: если один запрос упал —
+    //    остальные **всё равно** нужны. `catchError` внутри —
+    //    чтобы один упавший **не** уронил `Future.wait`.
+    final results = await Future.wait(
+      assistants.map((m) async {
+        try {
+          final sources = await _repository.getSources(
+            agentId: agentId,
+            messageId: m.id,
+          );
+          return MapEntry(m.id, sources);
+        } catch (e, stackTrace) {
+          // Ошибку логируем, но **не** роняем.
+          AppLogger.logException(
+            'Ошибка догрузки sources для ${m.id}',
+            e,
+            stackTrace,
+            {'agentId': agentId, 'messageId': m.id},
+          );
+          return MapEntry(m.id, const <MessageSource>[]);
+        }
+      }),
+    );
+
+    // 3. Собрать Map<messageId, sources>.
+    final sourcesByMessageId = <String, List<MessageSource>>{
+      for (final entry in results) entry.key: entry.value,
+    };
+
+    // 4. Один раз обновить state.
+    //
+    // Проходим по **актуальному** state.messages (за время запросов
+    // пользователь мог отправить **новое** сообщение — не потеряем).
+    // Берём id **из** текущего state, а sources — **из** Map.
+    final currentMessages = state.messages;
+    var anyUpdated = false;
+    final newMessages = <Message>[];
+
+    for (final message in currentMessages) {
+      final sources = sourcesByMessageId[message.id];
+
+      // Нет sources — оставляем сообщение как есть.
+      // Пустой список — тоже не подставляем: пустые sources
+      // в UI = «нет источников», а `null` = «не загружены» —
+      // семантически разные.
+      if (sources == null || sources.isEmpty) {
+        newMessages.add(message);
+        continue;
+      }
+
+      // У сообщения **уже** есть sources — не перезаписываем.
+      // (Например, если пользователь **успел** получить ответ
+      // через `sendMessage` пока шла догрузка — sources уже есть.)
+      if (message.sources != null && message.sources!.isNotEmpty) {
+        newMessages.add(message);
+        continue;
+      }
+
+      newMessages.add(message.copyWith(sources: sources));
+      anyUpdated = true;
+    }
+
+    if (anyUpdated) {
+      state = state.copyWith(messages: newMessages);
+      AppLogger.info('Sources догружены для истории');
+    } else {
+      AppLogger.debug('Нечего обновлять — sources пусты или уже есть');
+    }
+  }
+
   // ============================================================
   // ЗАГРУЗКА И УПРАВЛЕНИЕ ЧАТОМ
   // ============================================================
@@ -824,6 +950,29 @@ class ChatNotifier extends StateNotifier<ChatState> {
           );
 
       AppLogger.info('Загружено сообщений: ${messages.length}');
+
+      // ============================================================
+      // ДОГРУЗКА SOURCES ДЛЯ RAG-ИСТОРИИ
+      // ============================================================
+      //
+      // Только для RAG: `document_chat` **кладёт** sources **в** само
+      // сообщение (`MessageDto.sources`), `agentic_rag` — **нет**
+      // (см. README Agentic RAG). Значит, для RAG — догружаем
+      // отдельной ручкой.
+      //
+      // **Не блокируем.** `_setMessages` **уже** отработал —
+      // пользователь **видит** сообщения **сразу**. Sources
+      // **догрузятся** через ~200 мс и **обновят** пузыри.
+      //
+      // **`unawaited`** — не ждём завершения. Если пользователь
+      // **успел** выйти из чата (или отправить новое сообщение) —
+      // `_loadSourcesForHistory` **всё равно** отработает и обновит
+      // state. Если state **уже** не тот (новый чат) — там **есть**
+      // проверка `sources == null || sources.isEmpty` — **не**
+      // перезапишет чужие sources.
+      if (ragId != null) {
+        unawaited(_loadSourcesForHistory(agentId: agentId, messages: messages));
+      }
     } catch (e, stackTrace) {
       final appException = ErrorHandler.handle(
         e,
