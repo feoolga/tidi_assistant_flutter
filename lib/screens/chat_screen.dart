@@ -233,10 +233,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       final reversedIndex = messages.length - 1 - index;
                       final message = messages[reversedIndex];
 
+                      // **`isStreaming`** для этого сообщения — «идёт ли **сейчас**
+                      // стрим именно **этого** сообщения».
+                      //
+                      // **Что изменилось по сравнению с прошлой версией.** Раньше:
+                      // `chatState.isStreaming && !message.isFromUser && message.text.isEmpty`
+                      // — срабатывало **только** для **пустого** AI-сообщения (когда
+                      // показываем «typing indicator»). Но `MessageBubble` использует
+                      // `isStreaming` **ещё** и для **выбора** Text vs Markdown. С пустым
+                      // условием markdown рендерился **на каждой дельте** — тормоза.
+                      //
+                      // **Правильное условие** — «это **последнее** сообщение И идёт
+                      // стрим И это AI». Флаг `text.isEmpty` **больше** не нужен —
+                      // `MessageBubble` **сам** решает, показать точки (empty) или
+                      // Text (не empty). А **тип** рендера (Text vs Markdown) —
+                      // определяется `isStreaming`.
+                      //
+                      // **Проверка `reversedIndex == messages.length - 1`** — потому что
+                      // у нас `reverse: true`: **последнее** сообщение имеет
+                      // `reversedIndex == messages.length - 1` (это **индекс** в
+                      // **обычном** массиве).
                       final bool isStreamingForThisMessage =
                           chatState.isStreaming &&
                           !message.isFromUser &&
-                          message.text.isEmpty;
+                          reversedIndex == messages.length - 1;
 
                       // Передаём `onRetry` **только** для **последнего**
                       // сообщения. Для всех остальных — `null`.

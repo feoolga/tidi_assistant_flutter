@@ -8,6 +8,7 @@ import 'typing_indicator.dart';
 import '../core/utils/date_format.dart';
 import 'message_sources.dart';
 import '../domain/models/message_status.dart';
+import 'message_markdown.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -149,33 +150,39 @@ class MessageBubble extends StatelessWidget {
         // **Три сценария — в порядке приоритета:**
         // 1. Стрим идёт, текста нет → «typing indicator» (точки);
         // 2. Сообщение упало (status == failed) → пометка об ошибке;
-        // 3. Обычный текст → просто текст.
+        // 3. Есть текст → **markdown** (для AI) **или** обычный
+        //    `Text` (для user и для AI во время стрима).
         //
-        // **Почему `failed` — до `text.isNotEmpty`.** У failed-сообщений
-        // `text` **пустой** (сервер прервал генерацию). Если проверять
-        // текст первым — failed «утонет» в пустоте и покажется пустой
-        // пузырь с одним временем. Это и было проблемой на стенде.
+        // **Почему markdown** **только** **после** стрима и **только**
+        // **для** **AI:**
+        // - **Рендерить markdown на каждой дельте — дорого** (200
+        //   токенов = 200 полных перепарсингов). Пока стрим идёт,
+        //   показываем «сырой» текст — пользователь всё равно не
+        //   успевает прочитать его целиком.
+        // - **Пользователь не пишет markdown** — если написал
+        //   `**жирный**`, показываем как есть.
         //
-        // **Почему `failed` — после `showTypingIndicator`.** Если идёт
-        // **текущий** стрим (пользователь только что отправил), а
-        // предыдущее сообщение в истории оказалось failed — мы **не**
-        // хотим, чтобы «typing indicator» перекрывался пометкой
-        // об ошибке. `showTypingIndicator` привязан к **последнему**
-        // пустому AI-сообщению — если оно **не** failed (стрим идёт),
-        // покажем точки. Если failed — покажем ошибку.
+        // **`isStreaming`** — параметр **виджета** `MessageBubble`
+        // (приходит из `ChatScreen`), **не** поле `Message`. Это
+        // **важно**: при открытии **старого** чата (`loadChat`)
+        // `isStreaming == false` — **всё** сразу рендерится
+        // markdown (правильно: **ответы** уже завершены).
         if (showTypingIndicator)
           const TypingIndicator()
         else if (message.status == MessageStatus.failed)
           _buildFailedContent()
         else if (message.text.isNotEmpty)
-          Text(
-            message.text,
-            style: const TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 16,
-              height: 1.4,
-            ),
-          ),
+          // AI + не стрим → markdown; иначе (user ИЛИ стрим) → Text.
+          (!isFromUser && !isStreaming)
+              ? MessageMarkdown(text: message.text)
+              : Text(
+                  message.text,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    height: 1.4,
+                  ),
+                ),
 
         // Вложения — если есть. Идут под текстом, над временем.
         if (message.attachments.isNotEmpty) ...[
