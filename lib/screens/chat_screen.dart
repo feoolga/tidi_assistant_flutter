@@ -11,6 +11,7 @@ import '../widgets/app_snack_bar.dart';
 import '../widgets/chat_history_drawer.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
+import '../domain/models/message_status.dart';
 
 /// Главный экран чата.
 ///
@@ -221,6 +222,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     padding: const EdgeInsets.all(8.0),
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
+                      // У нас `reverse: true` — значит, **index 0** это
+                      // **последнее** сообщение, а `messages.length - 1`
+                      // это **первое** (самое старое). «reversedIndex» —
+                      // это индекс в **обычном** массиве `messages`.
                       final reversedIndex = messages.length - 1 - index;
                       final message = messages[reversedIndex];
 
@@ -229,9 +234,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           !message.isFromUser &&
                           message.text.isEmpty;
 
+                      // Передаём `onRetry` **только** для **последнего**
+                      // сообщения. Для всех остальных — `null`.
+                      //
+                      // **Почему только последнего.** См. комментарий
+                      // в `_buildFailedContent`: кнопка вызывает
+                      // `retryLastMessage`, который **повторяет
+                      // последний** failed-ответ. Если бы `onRetry`
+                      // был у **каждого** failed-пузыря в истории,
+                      // нажатие на **старый** failed **вызвало бы**
+                      // повтор **последнего** — это **обман**
+                      // пользователя.
+                      //
+                      // **Проверка `index == 0`** (а не `messages.length - 1`)
+                      // — потому что `reverse: true`: **визуально**
+                      // сверху — **последнее** сообщение, оно
+                      // **первое** в `ListView.builder` (index 0).
+                      final bool isLastMessage = index == 0;
+
                       return MessageBubble(
                         message: message,
                         isStreaming: isStreamingForThisMessage,
+                        onRetry:
+                            isLastMessage &&
+                                message.status == MessageStatus.failed
+                            ? () {
+                                AppLogger.info(
+                                  'Повторить последнее failed-сообщение',
+                                );
+                                ref
+                                    .read(chatProvider.notifier)
+                                    .retryLastMessage();
+                              }
+                            : null,
                       );
                     },
                   ),

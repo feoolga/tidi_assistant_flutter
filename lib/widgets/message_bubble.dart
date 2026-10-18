@@ -13,10 +13,26 @@ class MessageBubble extends StatelessWidget {
   final Message message;
   final bool isStreaming;
 
+  /// Колбэк «Повторить» для failed-сообщений.
+  ///
+  /// **Опциональный.** Если `null` — кнопка **не** показывается.
+  /// Это правильно: если родитель (например, `ChatScreen`) не умеет
+  /// повторить — нечего и предлагать.
+  ///
+  /// **Зачем через колбэк, а не напрямую `ChatNotifier`.**
+  /// `MessageBubble` — **stateless**-виджет, «чистый UI». Он **не
+  /// знает** про Riverpod, провайдеры, бизнес-логику. Родитель
+  /// (`ChatScreen`) **сам** решает, **что** делать при нажатии
+  /// (например, вызвать `chatProvider.notifier.retryLastMessage()`).
+  /// Это делает `MessageBubble` **переиспользуемым** — можно показать
+  /// его в тестах без провайдеров.
+  final VoidCallback? onRetry;
+
   const MessageBubble({
     super.key,
     required this.message,
     this.isStreaming = false,
+    this.onRetry,
   });
 
   @override
@@ -222,28 +238,71 @@ class MessageBubble extends StatelessWidget {
   ///   (в беклоге, после показа);
   /// - **не** меняем фон/рамку пузыря — только содержимое.
   Widget _buildFailedContent() {
-    return Row(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(
-          Icons.error_outline,
-          size: 18,
-          // Мягкий серый, а не красный — чтобы не пугать.
-          color: AppTheme.textSecondary,
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'Не удалось получить ответ. '
-            'Проверьте подключение к интернету.',
-            style: TextStyle(
+        // Строка «ошибка + текст».
+        //
+        // Обернули в `Row` + `Expanded` — чтобы иконка была **слева**,
+        // а текст **занимал оставшееся место** и **переносился**,
+        // если длинный. Без `Expanded` текст **обрезался** бы.
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 18,
+              // Мягкий серый, а не красный — чтобы не пугать.
               color: AppTheme.textSecondary,
-              fontSize: 14,
-              height: 1.4,
-              fontStyle: FontStyle.italic,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Не удалось получить ответ. '
+                'Проверьте подключение к интернету.',
+                style: TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 14,
+                  height: 1.4,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        // Кнопка «Повторить» — **только** если передан `onRetry`.
+        //
+        // **Почему `TextButton`, а не `ElevatedButton`:** это
+        // **вторичное** действие, «рядом» с текстом ошибки. `ElevatedButton`
+        // (с фоном) визуально **кричит** — а нам нужно **спокойно**
+        // предложить «хочешь — повтори». `TextButton` — **аккуратно**.
+        //
+        // **Почему `AppTheme.primary` (Тиффани), а не красный:** это
+        // **не** ошибка пользователя. Ошибка — у сервера / сети.
+        // Красный = «что-то пошло не так с тобой», Тиффани = «просто
+        // повтори, всё будет хорошо». Успокаивает.
+        //
+        // **Почему `Icons.refresh`:** стандартная иконка «повторить»,
+        // понятна без подписи. Но **подпись тоже** есть — для
+        // доступности (screen readers).
+        if (onRetry != null) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Повторить'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.primary,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }

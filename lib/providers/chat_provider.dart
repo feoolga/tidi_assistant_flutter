@@ -16,6 +16,7 @@ import 'attachment_draft_provider.dart';
 import 'session_provider.dart';
 import 'dart:async';
 import '../domain/models/message_source.dart';
+import '../domain/models/message_status.dart';
 
 // ============================================================
 // 1. СОСТОЯНИЕ ЧАТА
@@ -223,6 +224,62 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// Пометить последнее AI-сообщение как `failed`.
+  ///
+  /// **Зачем нужен.** Когда SSE-стрим падает **после** того, как
+  /// сервер уже **принял** запрос (получен `200`, стрим открылся),
+  /// пользователь **должен** видеть **пометку** «Не удалось получить
+  /// ответ» **с кнопкой «Повторить»** — а **не** пустоту.
+  ///
+  /// **Почему `_removeEmptyAiMessageIfAny` не подходит.**
+  /// Тот **удаляет** пузырь — хорошо, когда **сервер не знает**
+  /// о запросе (валидация, сеть до `postStream`). Но если **стрим был
+  /// открыт** — сервер **уже** создал ход, и «удалить» пузырь = скрыть
+  /// от пользователя **факт** неудачной попытки. Пользователь
+  /// запутается: «я отправил, а куда делось?».
+  ///
+  /// **Условия срабатывания:**
+  /// - есть **последнее** сообщение (список не пуст);
+  /// - оно **от AI** (`!isFromUser`);
+  /// - у него **пустой текст** (значит, это именно «наш» пустой пузырь,
+  ///   а не сообщение с частичным ответом — те **не** трогаем);
+  /// - у него ещё **не** статус `failed` (не перезаписываем дважды —
+  ///   иначе потеряем `errorMessage` от **первой** ошибки).
+  ///
+  /// **Что делает:**
+  /// - копирует сообщение с `status: MessageStatus.failed`;
+  /// - пробрасывает `errorMessage` (для логов/отладки);
+  /// - заменяет в state (атомарно, без «мигания»).
+  ///
+  /// **Что НЕ делает:**
+  /// - **не** удаляет пузырь (он должен **остаться** в UI);
+  /// - **не** трогает `ChatState.error` (SnackBar **не** покажется);
+  /// - **не** создаёт **новый** пузырь (переиспользует **тот же**).
+  void _markLastAiMessageAsFailed(String errorMessage) {
+    final currentMessages = state.messages;
+    if (currentMessages.isEmpty) return;
+
+    final lastIndex = currentMessages.length - 1;
+    final lastMessage = currentMessages[lastIndex];
+
+    // Условия: AI-сообщение, пустой текст, ещё не failed.
+    // Если хоть одно не выполнено — **не** трогаем.
+    if (lastMessage.isFromUser) return;
+    if (lastMessage.text.isNotEmpty) return;
+    if (lastMessage.status == MessageStatus.failed) return;
+
+    final updatedMessage = lastMessage.copyWith(
+      status: MessageStatus.failed,
+      errorMessage: errorMessage,
+    );
+
+    final newMessages = List<Message>.from(currentMessages);
+    newMessages[lastIndex] = updatedMessage;
+    state = state.copyWith(messages: newMessages);
+
+    AppLogger.info('AI-сообщение помечено как failed: "$errorMessage"');
+  }
+
   // ============================================================
   // ОТПРАВКА СООБЩЕНИЯ
   // ============================================================
@@ -324,107 +381,25 @@ class ChatNotifier extends StateNotifier<ChatState> {
         );
       }
 
-      // 4. Отправляем сообщение.
+      // 4–5. Отправка и обработка стрима — общий метод `_runStream`.
       //
-      // `ragId` берём из sessionProvider — для RAG-сессии он будет
-      // установлен (при создании набора). Для обычных агентов — `null`,
-      // и `SendMessageUseCase` соберёт `model` из `agentId`.
+      // См. `_runStream`: он создаёт `SendMessageParams`, запускает
+      // `SendMessageUseCase.execute` + `ChatStreamHandler.handle`
+      // и прогоняет `await for` по событиям. Логика **идентична**
+      // той, что была здесь inline. Вынесена **только** для того,
+      // чтобы `retryLastMessage` мог использовать её повторно.
+      //
+      // `currentAgentId` и `currentSessionId` — гарантированно
+      // non-null к этому моменту (созданы на шагах 3).
       final ragId = _ref.read(sessionProvider).ragId;
 
-      final params = SendMessageParams(
+      await _runStream(
         text: text,
-        agentId: currentAgentId,
+        agentId: currentAgentId!,
         sessionId: currentSessionId,
         ragId: ragId,
         attachments: attachments,
       );
-
-      final source = _sendMessageUseCase.execute(params);
-      final events = _streamHandler.handle(source);
-
-      // 5. Обрабатываем события стрима.
-      await for (final event in events) {
-        switch (event) {
-          case ChatStreamStarted():
-            AppLogger.debug('🟢 Стрим начался');
-            break;
-
-          case ChatStreamDelta(:final fullText):
-            _updateMessageText(fullText);
-            break;
-
-          case ChatStreamCompleted(
-            :final fullText,
-            :final messageId,
-            // Поле называется `agentId` (историческое имя), но по факту
-            // содержит `model` из ответа сервера (`rag/<uuid>` для RAG,
-            // `epoz` для обычных). Переименовываем в локальную переменную
-            // `modelFromResponse`, чтобы не путать с настоящим `agentId`
-            // для путей `/agents/{agentId}/...`.
-            //
-            // Синтаксис `поле: pattern` — второй вид field subpattern по спеке
-            // Dart 3: слева имя поля, справа pattern. См.
-            // https://dart.dev/language/patterns
-            agentId: final modelFromResponse,
-            :final conversationId,
-          ):
-            _updateMessageText(fullText);
-            _setStreaming(false);
-
-            _completeMessage(
-              agentId:
-                  currentAgentId, // ← было agentId (model), стало currentAgentId
-              sessionId: conversationId ?? currentSessionId,
-              messageId: messageId,
-            );
-
-            if (conversationId != null && currentAgentId != null) {
-              _ref
-                  .read(sessionProvider.notifier)
-                  .setSession(currentAgentId, conversationId); // ← было agentId
-            }
-
-            AppLogger.info('✅ Ответ получен полностью');
-            AppLogger.debug('   📌 Агент (для путей): $currentAgentId');
-            AppLogger.debug(
-              '   📌 model (эхо сервера): $modelFromResponse',
-            ); // ← переименовали
-            AppLogger.debug('   📌 Чат: $conversationId');
-            AppLogger.debug('   📌 ID сообщения: $messageId');
-            AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
-
-            final ragId = _ref.read(sessionProvider).ragId;
-            if (ragId != null &&
-                messageId != null &&
-                messageId.isNotEmpty &&
-                currentAgentId != null) {
-              unawaited(
-                _loadSourcesForMessage(
-                  agentId: currentAgentId, // ← было agentId ?? currentAgentId!
-                  messageId: messageId,
-                ),
-              );
-            }
-
-            _ref.read(attachmentDraftProvider.notifier).clear();
-            break;
-
-          case ChatStreamFailed(:final error):
-            // Логирование **уже произошло** в `SendMessageUseCase`
-            // (для `event: error`) или в `ErrorHandler.handle` внутри
-            // `ChatStreamHandler` (для транспортных ошибок — но мы это
-            // убрали, см. правку 2). Здесь — только UI-реакция.
-            //
-            // **Почему не логируем:** правило `ErrorHandler` —
-            // «единая точка логирования». Здесь мы не обрабатываем
-            // ошибку заново, а только показываем `userMessage`.
-            _removeEmptyAiMessageIfAny();
-            _setError(error.userMessage);
-            // Черновик вложений НЕ очищаем — пользователь может
-            // попробовать снова.
-            break;
-        }
-      }
     } catch (e, stackTrace) {
       final appException = ErrorHandler.handle(
         e,
@@ -436,6 +411,289 @@ class ChatNotifier extends StateNotifier<ChatState> {
       _setError(appException.userMessage);
     } finally {
       AppLogger.debug('🏁 Завершение обработки сообщения');
+      _setLoading(false);
+      _setStreaming(false);
+    }
+  }
+
+  // ============================================================
+  // ОБЩИЙ СТРИМ (sendMessage и retryLastMessage)
+  // ============================================================
+
+  /// Запустить отправку сообщения и обработать SSE-стрим.
+  ///
+  /// **Общий метод** для [sendMessage] и [retryLastMessage]. Логика
+  /// **идентична** той, что раньше была inline в [sendMessage]:
+  /// - создаёт [SendMessageParams];
+  /// - вызывает [SendMessageUseCase.execute];
+  /// - оборачивает в [ChatStreamHandler.handle];
+  /// - `await for` по событиям;
+  /// - на `ChatStreamCompleted` — обновляет последнее AI-сообщение,
+  ///   догружает sources (для RAG), очищает черновик вложений;
+  /// - на `ChatStreamFailed` — удаляет пустой AI-пузырь, ставит
+  ///   ошибку в state.
+  ///
+  /// **Чего метод НЕ делает:**
+  /// - не создаёт user-сообщение (это делает вызывающий код);
+  /// - не создаёт пустой AI-пузырь (тоже вызывающий код);
+  /// - не управляет `isLoading`/`isStreaming` — это тоже на вызывающем.
+  ///
+  /// **Зачем разнесли.** Раньше вся логика жила в [sendMessage].
+  /// При добавлении [retryLastMessage] её пришлось бы **дублировать**
+  /// — а это **риск** разъехаться. Один общий метод — один источник
+  /// правды.
+  ///
+  /// **Почему `chatState.isStreaming` не трогаем внутри.** Флаг
+  /// `isStreaming` в state управляет UI (`TypingIndicator`). Ставим
+  /// его **вне** этого метода — вместе с `isLoading`, чтобы состояние
+  /// было согласованным (оба включились / оба выключились в `finally`).
+  Future<void> _runStream({
+    required String text,
+    required String agentId,
+    required String? sessionId,
+    required String? ragId,
+    required List<Attachment> attachments,
+  }) async {
+    final params = SendMessageParams(
+      text: text,
+      agentId: agentId,
+      sessionId: sessionId,
+      ragId: ragId,
+      attachments: attachments,
+    );
+
+    final source = _sendMessageUseCase.execute(params);
+    final events = _streamHandler.handle(source);
+
+    await for (final event in events) {
+      switch (event) {
+        case ChatStreamStarted():
+          AppLogger.debug('🟢 Стрим начался');
+          break;
+
+        case ChatStreamDelta(:final fullText):
+          _updateMessageText(fullText);
+          break;
+
+        case ChatStreamCompleted(
+          :final fullText,
+          :final messageId,
+          // Поле называется `agentId` (историческое имя), но по факту
+          // содержит `model` из ответа сервера (`rag/<uuid>` для RAG,
+          // `epoz` для обычных). Переименовываем в локальную переменную
+          // `modelFromResponse`, чтобы не путать с настоящим `agentId`
+          // для путей `/agents/{agentId}/...`.
+          agentId: final modelFromResponse,
+          :final conversationId,
+        ):
+          _updateMessageText(fullText);
+          _setStreaming(false);
+
+          _completeMessage(
+            agentId: agentId,
+            sessionId: conversationId ?? sessionId,
+            messageId: messageId,
+          );
+
+          if (conversationId != null) {
+            _ref
+                .read(sessionProvider.notifier)
+                .setSession(agentId, conversationId);
+          }
+
+          AppLogger.info('✅ Ответ получен полностью');
+          AppLogger.debug('   📌 Агент (для путей): $agentId');
+          AppLogger.debug('   📌 model (эхо сервера): $modelFromResponse');
+          AppLogger.debug('   📌 Чат: $conversationId');
+          AppLogger.debug('   📌 ID сообщения: $messageId');
+          AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
+
+          if (ragId != null && messageId != null && messageId.isNotEmpty) {
+            unawaited(
+              _loadSourcesForMessage(agentId: agentId, messageId: messageId),
+            );
+          }
+
+          _ref.read(attachmentDraftProvider.notifier).clear();
+          break;
+
+        case ChatStreamFailed(:final error):
+          // Логирование **уже произошло** в `SendMessageUseCase`
+          // (для `event: error`) или в `ErrorHandler.handle` внутри
+          // `ChatStreamHandler` (для транспортных ошибок).
+          // Здесь — только UI-реакция.
+          //
+          // **Что делаем:** помечаем пустой AI-пузырь как `failed`.
+          // Пользователь видит «Не удалось получить ответ» **с**
+          // кнопкой «Повторить» **прямо в чате** — без SnackBar.
+          //
+          // **Почему НЕ `_removeEmptyAiMessageIfAny`.** Раньше
+          // удаляли пузырь — но тогда пользователь **терял**
+          // факт неудачной попытки (только SnackBar, который
+          // исчезает). Теперь пузырь **остаётся** — но с пометкой.
+          //
+          // **Почему НЕ `_setError`.** SnackBar **не** нужен:
+          // пометка **уже** в чате, пользователь её видит.
+          // Если поставить `_setError` — `ChatScreen` покажет
+          // **ещё и** SnackBar, получится **двойная** ошибка.
+          //
+          // **Почему `_markLastAiMessageAsFailed` безопасен.**
+          // Внутри есть **проверки**:
+          // - `isFromUser` — не трогаем user-сообщения;
+          // - `text.isNotEmpty` — не трогаем **частичные** ответы
+          //   (если стрим упал **после** получения нескольких токенов,
+          //   пользователь **уже** видит часть ответа — не надо
+          //   портить);
+          // - `status == failed` — не перезаписываем (иначе
+          //   потеряем `errorMessage` от **первой** ошибки).
+          _markLastAiMessageAsFailed(error.userMessage);
+          // Черновик вложений НЕ очищаем — пользователь может
+          // попробовать снова.
+          break;
+      }
+    }
+  }
+
+  // ============================================================
+  // ПОВТОР ОТПРАВКИ (для failed-сообщений)
+  // ============================================================
+
+  /// Повторить последнее user-сообщение, если после него — failed-AI.
+  ///
+  /// **Зачем нужен.** Если SSE-стрим оборвался (`client_disconnected`),
+  /// сервер сохраняет assistant-сообщение с `status: failed`
+  /// и **пустым** `text`. UI показывает пометку «Не удалось получить
+  /// ответ». Пользователь хочет **повторить** — эта функция делает
+  /// ровно это.
+  ///
+  /// **Логика:**
+  /// 1. Найти индекс последнего **user**-сообщения (с конца).
+  /// 2. Найти индекс последнего **assistant**-сообщения (после user).
+  /// 3. Проверить, что assistant — **failed**. Иначе — это **не**
+  ///    «повторить», а «странный вызов», тихо выходим.
+  /// 4. Заменить failed-пузырь на **пустой** `ok`-пузырь
+  ///    (text: '', status: ok) — так `MessageBubble` покажет
+  ///    `TypingIndicator`, а не старую ошибку.
+  /// 5. Запустить `_runStream` с **тем же** текстом user-сообщения.
+  ///
+  /// **Что **не** делает:**
+  /// - **не** создаёт **новое** user-сообщение (старое уже есть);
+  /// - **не** удаляет failed-пузырь (заменяет — чтобы не мигал UI);
+  /// - **не** работает для `document_chat` — у него **свой** механизм
+  ///   ретрая (`AttachmentDraftNotifier`), и там сообщения **не**
+  ///   имеют `status: failed` в БД.
+  ///
+  /// **Защита от дурака.** Если `state.isLoading` уже `true` —
+  /// выходим. Значит, пользователь нажал «Повторить» **во время**
+  /// другого стрима — это бессмысленно.
+  Future<void> retryLastMessage() async {
+    if (state.isLoading) {
+      AppLogger.warning('retryLastMessage: уже идёт отправка — пропускаем');
+      return;
+    }
+
+    // 1. Найти последнее user-сообщение.
+    //
+    // Идём **с конца**, потому что `state.messages` растёт в конец.
+    // Индекс последнего user — начало «последнего хода».
+    final messages = state.messages;
+    int? userIndex;
+    for (int i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].isFromUser) {
+        userIndex = i;
+        break;
+      }
+    }
+
+    if (userIndex == null) {
+      AppLogger.warning(
+        'retryLastMessage: нет user-сообщений — повтор невозможен',
+      );
+      return;
+    }
+
+    // 2. Индекс assistant — следующий после user. У нас **один**
+    //    ход = user + assistant, поэтому это `userIndex + 1`.
+    //    На всякий случай проверяем, что assistant **есть**.
+    final assistantIndex = userIndex + 1;
+    if (assistantIndex >= messages.length) {
+      AppLogger.warning(
+        'retryLastMessage: после user-сообщения нет assistant — '
+        'повтор невозможен',
+      );
+      return;
+    }
+
+    final failedMessage = messages[assistantIndex];
+
+    // 3. Проверка: точно failed?
+    if (failedMessage.status != MessageStatus.failed) {
+      AppLogger.warning(
+        'retryLastMessage: последнее assistant-сообщение '
+        'не failed (status: ${failedMessage.status.name}) — '
+        'повтор бессмысленен',
+      );
+      return;
+    }
+
+    // 4. Заменить failed-пузырь на пустой ok-пузырь.
+    //
+    // Почему **заменяем**, а не **удаляем** + создаём заново:
+    // замена **атомарна** с точки зрения UI — не будет «мигания»
+    // (удаление + создание = два rebuild'а).
+    //
+    // `text: ''` + `status: ok` → `MessageBubble` покажет
+    // `TypingIndicator` (потому что `message.text.isEmpty`,
+    // а `isStreaming` придёт из `ChatState`).
+    final emptyAi = failedMessage.copyWith(
+      text: '',
+      status: MessageStatus.ok,
+      errorMessage: null,
+    );
+
+    final newMessages = List<Message>.from(messages);
+    newMessages[assistantIndex] = emptyAi;
+    state = state.copyWith(messages: newMessages);
+
+    // 5. Запустить стрим.
+    final userText = messages[userIndex].text;
+
+    _clearError();
+    _setLoading(true);
+    _setStreaming(true);
+
+    try {
+      final session = _ref.read(sessionProvider);
+      final currentAgentId = session.agentId;
+      final currentSessionId = session.sessionId;
+      final ragId = session.ragId;
+
+      if (currentAgentId == null || currentSessionId == null) {
+        // Сессия потеряна — не можем повторить. Ставим ошибку.
+        _setError('Не удалось повторить: сессия потеряна.');
+        return;
+      }
+
+      await _runStream(
+        text: userText,
+        agentId: currentAgentId,
+        sessionId: currentSessionId,
+        ragId: ragId,
+        // Вложения для retry **не** передаём: если они были —
+        // пользователь уже отправил их, и повтор без файлов —
+        // корректное поведение (файлы уже на сервере).
+        attachments: const [],
+      );
+    } catch (e, stackTrace) {
+      final appException = ErrorHandler.handle(
+        e,
+        stackTrace,
+        'Ошибка в retryLastMessage',
+        {'text_length': userText.length},
+      );
+      _removeEmptyAiMessageIfAny();
+      _setError(appException.userMessage);
+    } finally {
       _setLoading(false);
       _setStreaming(false);
     }
