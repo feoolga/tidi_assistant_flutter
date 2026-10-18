@@ -179,6 +179,28 @@ class _MessageInputState extends ConsumerState<MessageInput> {
         !widget.isLoading &&
         allAttachmentsReady;
 
+    // Показывать ли кнопку прикрепления файла **вообще**.
+    //
+    // **Отличие от `canAttach`:** `canAttach` — «доступна ли кнопка
+    // **сейчас**» (не идёт ли стрим/загрузка). `showAttachButton` —
+    // «показывать ли кнопку **в принципе** для этого агента».
+    //
+    // **Правило:**
+    // - `agentId == null` — новый чат, прикрепление **создаст**
+    //   `document_chat` → **показать**;
+    // - `agentId == 'document_chat'` — единственный агент, который
+    //   принимает файлы → **показать**;
+    // - всё остальное (`agentic_rag`, `epoz`, `chat`, ...) — файлы
+    //   **не** принимаются → **скрыть**. Пользователь **не** видит
+    //   кнопку — **не** пытается прикрепить. Меньше раздражения.
+    //
+    // **Почему не просто `canAttach`.** `canAttach` **учитывает**
+    // `isLoading` (идёт стрим) — в этот момент кнопка **должна**
+    // **быть**, но **неактивной** (UI **не** «прыгает»). Если скрыть
+    // на время стрима — вёрстка **съедет**.
+    final showAttachButton =
+        sessionState.agentId == null || sessionState.agentId == 'document_chat';
+
     final canAttach = _canAttach(
       draftIsLoading: draftState.isLoading,
       currentAgentId: sessionState.agentId,
@@ -212,18 +234,29 @@ class _MessageInputState extends ConsumerState<MessageInput> {
             // Основная строка: прикрепить, микрофон, поле ввода, отправка.
             Row(
               children: [
-                // 📎 Кнопка прикрепления файла
-                IconButton(
-                  onPressed: canAttach ? _pickAndAttach : null,
-                  icon: Icon(
-                    Icons.attach_file,
-                    color: canAttach ? AppTheme.primary : Colors.grey[400],
-                    size: 24,
+                // 📎 Кнопка прикрепления файла.
+                //
+                // **Показываем только если `showAttachButton == true`.**
+                // См. комментарий к `showAttachButton` выше — там
+                // подробно, **почему** не просто `canAttach`.
+                //
+                // Если `showAttachButton == false` (RAG-чат, `epoz`,
+                // `chat`) — кнопки **нет вообще**. Соседние элементы
+                // (микрофон, поле ввода) сдвинутся влево — это
+                // **правильно**, вёрстка **не** сломается, поле ввода
+                // **расширится**.
+                if (showAttachButton)
+                  IconButton(
+                    onPressed: canAttach ? _pickAndAttach : null,
+                    icon: Icon(
+                      Icons.attach_file,
+                      color: canAttach ? AppTheme.primary : Colors.grey[400],
+                      size: 24,
+                    ),
+                    tooltip: 'Прикрепить файл',
+                    padding: const EdgeInsets.all(8),
+                    constraints: const BoxConstraints(),
                   ),
-                  tooltip: 'Прикрепить файл',
-                  padding: const EdgeInsets.all(8),
-                  constraints: const BoxConstraints(),
-                ),
 
                 // 🎙️ Кнопка микрофона (заглушка на будущее)
                 IconButton(
