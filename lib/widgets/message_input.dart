@@ -231,133 +231,133 @@ class _MessageInputState extends ConsumerState<MessageInput> {
             // Превью прикреплённых файлов — только если есть что показывать.
             if (hasAttachments) _buildAttachmentsBar(draftState),
 
-            // Основная строка: прикрепить, микрофон, поле ввода, отправка.
-            Row(
-              children: [
-                // 📎 Кнопка прикрепления файла.
-                //
-                // **Показываем только если `showAttachButton == true`.**
-                // См. комментарий к `showAttachButton` выше — там
-                // подробно, **почему** не просто `canAttach`.
-                //
-                // Если `showAttachButton == false` (RAG-чат, `epoz`,
-                // `chat`) — кнопки **нет вообще**. Соседние элементы
-                // (микрофон, поле ввода) сдвинутся влево — это
-                // **правильно**, вёрстка **не** сломается, поле ввода
-                // **расширится**.
-                if (showAttachButton)
-                  IconButton(
-                    onPressed: canAttach ? _pickAndAttach : null,
-                    icon: Icon(
-                      Icons.attach_file,
-                      color: canAttach ? AppTheme.primary : Colors.grey[400],
-                      size: 24,
-                    ),
-                    tooltip: 'Прикрепить файл',
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(),
-                  ),
-
-                // 🎙️ Кнопка микрофона (заглушка на будущее)
-                IconButton(
-                  onPressed: widget.isLoading ? null : () {},
-                  icon: Icon(
-                    Icons.mic,
-                    color: widget.isLoading
-                        ? Colors.grey[400]
-                        : AppTheme.primary,
-                    size: 24,
-                  ),
-                  tooltip: 'Голосовое сообщение',
-                  padding: const EdgeInsets.all(8),
-                  constraints: const BoxConstraints(),
+            // ============================================================
+            // ЕДИНЫЙ КОНТЕЙНЕР: поле ввода СВЕРХУ, кнопки СНИЗУ
+            // ============================================================
+            //
+            // **Почему так.** Раньше кнопки были по бокам от поля — поле
+            // получалось узким (на маленьких экранах — совсем). Теперь
+            // кнопки — **под** полем, справа. Поле занимает **всю**
+            // ширину контейнера.
+            //
+            // **Что осталось прежним:** фон, рамка, скругление — всё
+            // `AppTheme.primaryLight` / `AppTheme.primary`. Дизайн
+            // не ломаем.
+            Container(
+              decoration: BoxDecoration(
+                color: AppTheme.primaryLight,
+                borderRadius: BorderRadius.circular(20.0),
+                border: Border.all(
+                  color: _hasText
+                      ? AppTheme.primary
+                      : AppTheme.primary.withValues(alpha: 0.3),
+                  width: 1.5,
                 ),
-
-                const SizedBox(width: 4),
-
-                // 📝 Поле ввода
-                Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryLight,
-                      borderRadius: BorderRadius.circular(20.0),
-                      border: Border.all(
-                        color: _hasText
-                            ? AppTheme.primary
-                            : AppTheme.primary.withValues(alpha: 0.3),
-                        width: 1.5,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Поле ввода — на всю ширину.
+                  TextField(
+                    controller: _controller,
+                    enabled: !widget.isLoading,
+                    decoration: InputDecoration(
+                      hintText: widget.isLoading
+                          ? 'Ожидание ответа...'
+                          : 'Ваше сообщение...',
+                      hintStyle: TextStyle(
+                        color: Colors.grey[400],
+                        fontSize: 15,
                       ),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                      prefixIcon: null,
+                      suffixIcon: null,
                     ),
-                    child: TextField(
-                      controller: _controller,
-                      enabled: !widget.isLoading,
-                      decoration: InputDecoration(
-                        hintText: widget.isLoading
-                            ? 'Ожидание ответа...'
-                            : 'Ваше сообщение...',
-                        hintStyle: TextStyle(
-                          color: Colors.grey[400],
-                          fontSize: 15,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: AppTheme.textPrimary,
+                    ),
+                    onSubmitted: (_) => _sendMessage(),
+                    // **`maxLines: 5`** — ограничиваем высоту поля
+                    // 5 строками. Дальше — `TextField` **скроллится**
+                    // **внутри** **себя**.
+                    maxLines: 5,
+                    minLines: 1,
+                  ),
+
+                  // Кнопки — под полем: прикрепить/микрофон слева,
+                  // отправить справа. Разделитель — `Spacer` (растягивается
+                  // на всё свободное место между ними).
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                    child: Row(
+                      children: [
+                        // 📎 Кнопка прикрепления файла.
+                        //
+                        // **Показываем только если `showAttachButton == true`.**
+                        if (showAttachButton)
+                          IconButton(
+                            onPressed: canAttach ? _pickAndAttach : null,
+                            icon: Icon(
+                              Icons.attach_file,
+                              color: canAttach
+                                  ? AppTheme.primary
+                                  : Colors.grey[400],
+                              size: 22,
+                            ),
+                            tooltip: 'Прикрепить файл',
+                            padding: const EdgeInsets.all(6),
+                            constraints: const BoxConstraints(),
+                          ),
+
+                        // 🎙️ Кнопка микрофона (заглушка на будущее).
+                        IconButton(
+                          onPressed: widget.isLoading ? null : () {},
+                          icon: Icon(
+                            Icons.mic,
+                            color: widget.isLoading
+                                ? Colors.grey[400]
+                                : AppTheme.primary,
+                            size: 22,
+                          ),
+                          tooltip: 'Голосовое сообщение',
+                          padding: const EdgeInsets.all(6),
+                          constraints: const BoxConstraints(),
                         ),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16.0,
-                          vertical: 12.0,
+
+                        // **`Spacer`** — занимает всё свободное место
+                        // между микрофоном и отправкой. Прижимает
+                        // отправку к правому краю, а скрепку/микрофон —
+                        // к левому.
+                        const Spacer(),
+
+                        // 🚀 Кнопка отправки — **внутри** контейнера.
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: canSend
+                                ? AppTheme.primary
+                                : Colors.grey[300],
+                          ),
+                          child: IconButton(
+                            onPressed: canSend ? _sendMessage : null,
+                            icon: const Icon(
+                              Icons.send_rounded,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
                         ),
-                        prefixIcon: null,
-                        suffixIcon: null,
-                      ),
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: AppTheme.textPrimary,
-                      ),
-                      onSubmitted: (_) => _sendMessage(),
-                      // **`maxLines: 5`** — ограничиваем высоту поля
-                      // 5 строками. Дальше — `TextField` **скроллится**
-                      // **внутри** **себя** (`TextField` **сам**
-                      // **поддерживает** **скролл**, **когда** **текст**
-                      // **больше** `maxLines`).
-                      //
-                      // **Почему** **не** `null` (**как** **было**):
-                      // `null` — **бесконечный** **рост**. **При**
-                      // **длинном** **тексте** — **поле** **вылезает**
-                      // **за** **границы** `Container` → **debug**-плашка
-                      // `BOTTOM OVERFLOWED BY N PIXELS` **и** **сломанная**
-                      // **вёрстка** **в** **release** (**поле** **уходит**
-                      // **за** **экран**).
-                      //
-                      // **Почему** **5**: **стандарт** UX (**WhatsApp**,
-                      // **Telegram**). **Достаточно**, **чтобы** **видеть**
-                      // **средний** **вопрос** **целиком**; **больше** —
-                      // **скролл** **внутри**.
-                      maxLines: 5,
-                      minLines: 1,
+                      ],
                     ),
                   ),
-                ),
-
-                const SizedBox(width: 8),
-
-                // 🚀 Кнопка отправки
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: canSend ? AppTheme.primary : Colors.grey[300],
-                  ),
-                  child: IconButton(
-                    onPressed: canSend ? _sendMessage : null,
-                    icon: const Icon(
-                      Icons.send_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),
