@@ -134,7 +134,11 @@ class RagDocumentMapper {
   static int _resolveSizeBytes(RagDocumentDto dto) {
     if (dto.sizeBytes != null) return dto.sizeBytes!;
 
-    AppLogger.warning(
+    // **debug**, **не** **warning**: `size_bytes` **не** **приходит**
+    // в `POST .../documents` (см. README RAG Ingest) — это
+    // **штатное** **поведение**, **не** **аномалия**. Warning
+    // создавал бы **шум** в логах на каждом запросе.
+    AppLogger.debug(
       'RagDocumentMapper: size_bytes отсутствует для документа ${dto.id}, '
       'использую 0.',
     );
@@ -162,7 +166,10 @@ class RagDocumentMapper {
   static DateTime _resolveCreatedAt(RagDocumentDto dto) {
     if (dto.createdAt != null) return dto.createdAt!;
 
-    AppLogger.warning(
+    // **debug**, **не** **warning**: `created_at` **может** **не** **прийти**
+    // при **первой** **загрузке** (появляется позже). Это **штатное**
+    // **поведение**, **не** **аномалия**.
+    AppLogger.debug(
       'RagDocumentMapper: created_at отсутствует для документа ${dto.id}, '
       'использую эпоху (1970-01-01).',
     );
