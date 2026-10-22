@@ -12,55 +12,28 @@ import 'package:tidi_assistant_flutter/domain/models/attachment.dart';
 import 'package:tidi_assistant_flutter/domain/models/chat_session.dart';
 import 'package:tidi_assistant_flutter/domain/models/message.dart';
 import 'package:tidi_assistant_flutter/domain/models/message_source.dart';
+import 'package:tidi_assistant_flutter/domain/models/message_status.dart';
+import 'package:tidi_assistant_flutter/domain/services/chat_message_sender.dart';
+import 'package:tidi_assistant_flutter/domain/services/chat_stream_event.dart';
 import 'package:tidi_assistant_flutter/providers/agent_provider.dart';
 import 'package:tidi_assistant_flutter/providers/chat_provider.dart';
 import 'package:tidi_assistant_flutter/providers/session_provider.dart';
 
-/// Тесты на `ChatNotifier` — **страховка** перед рефакторингом.
+/// Тесты на `ChatNotifier` — **страховка** перед/после рефакторинга.
 ///
-/// **Зачем.** `ChatNotifier` — God-object (~700 строк). Перед разделением
-/// на сервисы надо **зафиксировать** текущее поведение тестами. После
-/// рефакторинга те же тесты **должны** быть зелёными — значит,
-/// поведение **не** изменилось.
+/// **Фаза 1**: «золотые» тесты (createNewChat, clearChat, clearError,
+/// loadChat, sendMessage — ошибка getRoute, retryLastMessage — нет user).
 ///
-/// **Что тестируем** (пошагово, от простого к сложному):
-/// 1. `createNewChat` — очищает messages, добавляет welcome, сбрасывает
-///    сессию.
-/// 2. `clearChat` — очищает messages, добавляет welcome, **НЕ** трогает
-///    сессию.
-/// 3. `clearError` — сбрасывает error.
-/// 4. `loadChat` — успех/404.
-/// 5. `sendMessage` — ошибка `/route`.
-/// 6. `retryLastMessage` — нет user (ничего не делает).
+/// **Фаза 4.1**: happy path (`sendMessage`, `retryLastMessage`),
+/// догрузка sources (после стрима, из истории).
 ///
-/// **Что НЕ тестируем (в этой фазе):**
-/// - `sendMessage` happy path — требует `FakeSendMessageUseCase`
-///   (сделаем в Фазе 1.2 — когда будем тестировать стрим).
-/// - `retryLastMessage` happy path — то же.
-/// - Догрузку sources для RAG — то же (нужен фейк с `getSources`).
-/// - Приватные методы — покрываются **через** публичные.
-///
-/// **Принцип:** тесты проверяют **поведение** (state), а не
-/// реализацию. Рефакторинг `ChatNotifier` не должен их сломать,
-/// потому что **публичный API** и **state** остаются теми же.
+/// **Принцип**: проверяем **поведение** (state), а не реализацию.
+/// Рефакторинг `ChatNotifier` не должен их сломать.
 
 // ============================================================
-// ФЕЙКИ (заменяют реальные зависимости в тестах)
+// ФЕЙКИ
 // ============================================================
 
-/// Фейковый `ChatRepository` для тестов.
-///
-/// **Зачем.** Реальный `ChatRepository` **ходит** **по** **HTTP**.
-/// В **тестах** **нельзя** **ходить** **в** **сеть** (**нет** **сервера**,
-/// **медленно**, **нестабильно**).
-///
-/// **Что делаем.** **Наследуемся** **от** **реального** `ChatRepository`
-/// (**Dart** **позволяет** **наследование** **с** **final** **полями** —
-/// **просто** **переопределяем** **все** **публичные** **методы**).
-///
-/// **Что** **настраиваем** **в** **каждом** **тесте** — **через** **функции**
-/// (`onGetRoute`, `onGetMessages` и т.д.), **чтобы** **гибко** **задавать**
-/// **поведение**.
 class FakeChatRepository implements ChatRepository {
   String Function(String message)? onGetRoute;
   ChatSession Function(String agentId, String? title, String? ragId)?
@@ -150,7 +123,46 @@ class FakeChatRepository implements ChatRepository {
     sendMessageStreamCalls++;
     throw UnimplementedError(
       'sendMessageStream для тестов не нужен — '
-      'используй onSendMessageStream через SendMessageUseCase.',
+      'используй FakeChatMessageSender.',
+    );
+  }
+}
+
+/// Фейковый `ChatMessageSender`.
+///
+/// **Зачем**: `ChatNotifier.sendMessage` **вызывает** `_messageSender.send`
+/// **и** **обрабатывает** **события**. **В** **тестах** — **подменяем**
+/// **сервис** **фейком** **с** **заранее** **заготовленным** **потоком**.
+class FakeChatMessageSender implements ChatMessageSender {
+  Stream<ChatStreamEvent> Function({
+    required String text,
+    required String agentId,
+    required String? sessionId,
+    required String? ragId,
+    required List<Attachment> attachments,
+  })?
+  onSend;
+
+  int sendCalls = 0;
+
+  @override
+  Stream<ChatStreamEvent> send({
+    required String text,
+    required String agentId,
+    required String? sessionId,
+    required String? ragId,
+    required List<Attachment> attachments,
+  }) {
+    sendCalls++;
+    if (onSend == null) {
+      throw StateError('FakeChatMessageSender.onSend не задан');
+    }
+    return onSend!(
+      text: text,
+      agentId: agentId,
+      sessionId: sessionId,
+      ragId: ragId,
+      attachments: attachments,
     );
   }
 }
@@ -164,20 +176,19 @@ void main() {
   ///
   /// **Что подменяем:**
   /// - `chatRepositoryProvider` → `FakeChatRepository`;
-  /// - `agentsProvider` → пустой список (для `loadChat`).
-  ///
-  /// **Что оставляем настоящим:**
-  /// - `sessionProvider` — обычный `StateNotifier`, без HTTP;
-  /// - `attachmentDraftProvider` — обычный `StateNotifier`
-  ///   (пока не создаёт реальный `ChatRepository` — создаёт, но
-  ///   **не** **использует**, так как тесты не вызывают
-  ///   `addAttachment`);
-  /// - `chatStreamHandlerProvider` — чистый Dart.
-  ProviderContainer makeContainer(FakeChatRepository fakeRepository) {
+  /// - `agentsProvider` → пустой список (для `loadChat`);
+  /// - `chatMessageSenderProvider` → `FakeChatMessageSender`
+  ///   (**если** **передан** — **для** **тестов** `sendMessage` **с** **потоком**).
+  ProviderContainer makeContainer({
+    required FakeChatRepository fakeRepository,
+    FakeChatMessageSender? fakeSender,
+  }) {
     return ProviderContainer(
       overrides: [
         chatRepositoryProvider.overrideWithValue(fakeRepository),
         agentsProvider.overrideWith((ref) async => <Agent>[]),
+        if (fakeSender != null)
+          chatMessageSenderProvider.overrideWithValue(fakeSender),
       ],
     );
   }
@@ -189,32 +200,27 @@ void main() {
   group('ChatNotifier.createNewChat', () {
     test('очищает messages, добавляет welcome, сбрасывает сессию', () {
       final fakeRepository = FakeChatRepository();
-      final container = makeContainer(fakeRepository);
+      final container = makeContainer(fakeRepository: fakeRepository);
       addTearDown(container.dispose);
 
       final chatNotifier = container.read(chatProvider.notifier);
       final sessionNotifier = container.read(sessionProvider.notifier);
 
-      // Подготовка: "загрязняем" сессию.
       sessionNotifier.setSession(
         'document_chat',
         'some-session-id',
         agentDisplayName: 'Документы',
       );
 
-      // Действие.
       chatNotifier.createNewChat();
 
-      // Проверки.
       final state = container.read(chatProvider);
       final session = container.read(sessionProvider);
 
-      // messages — ровно 1 сообщение (welcome).
       expect(state.messages.length, 1);
       expect(state.messages.first.isFromUser, false);
       expect(state.messages.first.text, contains('Здравствуйте'));
 
-      // Сессия — сброшена.
       expect(session.agentId, isNull);
       expect(session.sessionId, isNull);
       expect(session.ragId, isNull);
@@ -229,7 +235,7 @@ void main() {
   group('ChatNotifier.clearChat', () {
     test('очищает messages, добавляет welcome, НЕ трогает сессию', () {
       final fakeRepository = FakeChatRepository();
-      final container = makeContainer(fakeRepository);
+      final container = makeContainer(fakeRepository: fakeRepository);
       addTearDown(container.dispose);
 
       final chatNotifier = container.read(chatProvider.notifier);
@@ -241,17 +247,14 @@ void main() {
         agentDisplayName: 'ЕПоЗ',
       );
 
-      // Действие.
       chatNotifier.clearChat();
 
-      // Проверки.
       final state = container.read(chatProvider);
       final session = container.read(sessionProvider);
 
       expect(state.messages.length, 1);
       expect(state.messages.first.isFromUser, false);
 
-      // Сессия — **не** сброшена (отличие от createNewChat).
       expect(session.agentId, 'epoz');
       expect(session.sessionId, 'epoz-session-1');
       expect(session.agentDisplayName, 'ЕПоЗ');
@@ -265,14 +268,11 @@ void main() {
   group('ChatNotifier.clearError', () {
     test('сбрасывает error в state', () {
       final fakeRepository = FakeChatRepository();
-      final container = makeContainer(fakeRepository);
+      final container = makeContainer(fakeRepository: fakeRepository);
       addTearDown(container.dispose);
 
       final notifier = container.read(chatProvider.notifier);
 
-      // Вызываем — не падает, state остаётся валидным.
-      // Полноценная проверка "сбросил реальную ошибку" —
-      // в следующей фазе (когда сможем выставить error через sendMessage).
       notifier.clearError();
 
       final state = container.read(chatProvider);
@@ -281,7 +281,7 @@ void main() {
   });
 
   // ============================================================
-  // ТЕСТ 4: loadChat — успех
+  // ТЕСТ 4: loadChat — успех / 404
   // ============================================================
 
   group('ChatNotifier.loadChat', () {
@@ -304,7 +304,7 @@ void main() {
         ];
       };
 
-      final container = makeContainer(fakeRepository);
+      final container = makeContainer(fakeRepository: fakeRepository);
       addTearDown(container.dispose);
 
       final notifier = container.read(chatProvider.notifier);
@@ -314,17 +314,14 @@ void main() {
       final state = container.read(chatProvider);
       final session = container.read(sessionProvider);
 
-      // messages — загружены.
       expect(state.messages.length, 2);
       expect(state.messages.first.text, 'Привет');
       expect(state.messages.last.text, 'Здравствуйте');
 
-      // Сессия — установлена.
       expect(session.agentId, 'epoz');
       expect(session.sessionId, 'chat-42');
       expect(session.ragId, isNull);
 
-      // Репозиторий — вызван.
       expect(fakeRepository.getMessagesCalls, 1);
     });
 
@@ -334,7 +331,7 @@ void main() {
         throw BusinessException.chatNotFound(conversationId);
       };
 
-      final container = makeContainer(fakeRepository);
+      final container = makeContainer(fakeRepository: fakeRepository);
       addTearDown(container.dispose);
 
       final notifier = container.read(chatProvider.notifier);
@@ -358,7 +355,7 @@ void main() {
         throw NetworkException.connectionError();
       };
 
-      final container = makeContainer(fakeRepository);
+      final container = makeContainer(fakeRepository: fakeRepository);
       addTearDown(container.dispose);
 
       final notifier = container.read(chatProvider.notifier);
@@ -367,16 +364,79 @@ void main() {
 
       final state = container.read(chatProvider);
 
-      // error — установлена.
       expect(state.error, isNotNull);
 
-      // messages — welcome + user (пустой AI-пузырь удалён).
+      // welcome + user = 2 (пустой AI-пузырь удалён).
       expect(state.messages.length, 2);
       expect(state.messages.last.isFromUser, true);
       expect(state.messages.last.text, 'привет');
 
-      // getRoute — вызван.
       expect(fakeRepository.getRouteCalls, 1);
+    });
+
+    // ============================================================
+    // ТЕСТ 7: sendMessage — happy path (новый тест, Фаза 4.1)
+    // ============================================================
+
+    test('успех: пользователь → AI, обновляет state', () async {
+      final fakeRepository = FakeChatRepository();
+      fakeRepository.onGetRoute = (_) => 'epoz';
+      fakeRepository.onCreateConversation = (agentId, title, ragId) {
+        return ChatSession(
+          id: 'chat-1',
+          agentId: agentId,
+          title: title,
+          createdAt: DateTime(2026, 1, 1),
+          updatedAt: DateTime(2026, 1, 1),
+        );
+      };
+
+      final fakeSender = FakeChatMessageSender();
+      fakeSender.onSend =
+          ({
+            required String text,
+            required String agentId,
+            required String? sessionId,
+            required String? ragId,
+            required List<Attachment> attachments,
+          }) {
+            return Stream.fromIterable([
+              const ChatStreamStarted(),
+              const ChatStreamDelta(fullText: 'Привет'),
+              const ChatStreamCompleted(
+                fullText: 'Привет',
+                messageId: 'resp_1',
+                agentId: 'epoz',
+                conversationId: 'chat-1',
+              ),
+            ]);
+          };
+
+      final container = makeContainer(
+        fakeRepository: fakeRepository,
+        fakeSender: fakeSender,
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(chatProvider.notifier);
+
+      await notifier.sendMessage(text: 'привет');
+
+      final state = container.read(chatProvider);
+      final session = container.read(sessionProvider);
+
+      // welcome + user + AI = 3
+      expect(state.messages.length, 3);
+      expect(state.messages[1].text, 'привет');
+      expect(state.messages[1].isFromUser, true);
+      expect(state.messages[2].text, 'Привет');
+      expect(state.messages[2].isFromUser, false);
+      expect(state.messages[2].id, 'resp_1');
+
+      expect(session.agentId, 'epoz');
+      expect(session.sessionId, 'chat-1');
+
+      expect(fakeSender.sendCalls, 1);
     });
   });
 
@@ -387,12 +447,11 @@ void main() {
   group('ChatNotifier.retryLastMessage', () {
     test('нет user-сообщения: ничего не делает', () async {
       final fakeRepository = FakeChatRepository();
-      final container = makeContainer(fakeRepository);
+      final container = makeContainer(fakeRepository: fakeRepository);
       addTearDown(container.dispose);
 
       final notifier = container.read(chatProvider.notifier);
 
-      // В state — только welcome (AI). Нет user.
       await notifier.retryLastMessage();
 
       final state = container.read(chatProvider);
@@ -400,8 +459,158 @@ void main() {
       expect(state.messages.length, 1);
       expect(state.messages.first.isFromUser, false);
 
-      // Репозиторий — не вызван.
       expect(fakeRepository.sendMessageStreamCalls, 0);
+    });
+
+    // ============================================================
+    // ТЕСТ 8: retryLastMessage — happy path (новый тест, Фаза 4.1)
+    // ============================================================
+
+    test('успех: заменяет failed на AI-ответ', () async {
+      final fakeRepository = FakeChatRepository();
+      final fakeSender = FakeChatMessageSender();
+
+      // Готовим state: user + failed AI.
+      // welcome + user + failed AI = 3.
+      //
+      // **`copyWith`** — единственный способ **изменить** state
+      // (он immutable). Но проще — **через** **публичный** API.
+      //
+      // Используем sendMessage с ошибкой getRoute — state получит
+      // welcome + user, потом надо добавить failed AI. Но это
+      // **сложно** (надо **имитировать** **failed**).
+      //
+      // Проще: сначала **установить** сессию, потом `retryLastMessage`.
+      // Но `retryLastMessage` **ищет** `failed` AI — если его нет,
+      // **выйдет** **рано**.
+      //
+      // **Решение**: сначала **провалить** sendMessage через
+      // `fakeSender.onSend` (поток с ChatStreamFailed), потом
+      // **повторить**.
+      fakeRepository.onGetRoute = (_) => 'epoz';
+      fakeRepository.onCreateConversation = (agentId, title, ragId) {
+        return ChatSession(
+          id: 'chat-1',
+          agentId: agentId,
+          title: title,
+          createdAt: DateTime(2026, 1, 1),
+          updatedAt: DateTime(2026, 1, 1),
+        );
+      };
+
+      // 1. Первый send — «падает» с ChatStreamFailed.
+      fakeSender.onSend =
+          ({
+            required String text,
+            required String agentId,
+            required String? sessionId,
+            required String? ragId,
+            required List<Attachment> attachments,
+          }) {
+            return Stream.fromIterable([
+              const ChatStreamStarted(),
+              ChatStreamFailed(error: NetworkException.connectionError()),
+            ]);
+          };
+
+      final container = makeContainer(
+        fakeRepository: fakeRepository,
+        fakeSender: fakeSender,
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(chatProvider.notifier);
+
+      await notifier.sendMessage(text: 'привет');
+
+      // Проверили, что AI-сообщение помечено failed.
+      var state = container.read(chatProvider);
+      expect(state.messages.last.status, MessageStatus.failed);
+
+      // 2. Готовим второй send — «успех».
+      fakeSender.onSend =
+          ({
+            required String text,
+            required String agentId,
+            required String? sessionId,
+            required String? ragId,
+            required List<Attachment> attachments,
+          }) {
+            return Stream.fromIterable([
+              const ChatStreamStarted(),
+              const ChatStreamDelta(fullText: 'Привет'),
+              const ChatStreamCompleted(
+                fullText: 'Привет',
+                messageId: 'resp_2',
+                agentId: 'epoz',
+                conversationId: 'chat-1',
+              ),
+            ]);
+          };
+
+      // 3. Повтор.
+      await notifier.retryLastMessage();
+
+      state = container.read(chatProvider);
+
+      // welcome + user + AI = 3.
+      expect(state.messages.length, 3);
+      expect(state.messages.last.text, 'Привет');
+      expect(state.messages.last.status, MessageStatus.ok);
+      expect(state.messages.last.id, 'resp_2');
+
+      // Сервис вызван дважды (первый send + retry).
+      expect(fakeSender.sendCalls, 2);
+    });
+  });
+
+  // ============================================================
+  // ТЕСТ 9: loadChat для RAG — догрузка sources (Фаза 4.1)
+  // ============================================================
+
+  group('ChatNotifier.loadChat (RAG sources)', () {
+    test('догружает sources для assistant-сообщений', () async {
+      final fakeRepository = FakeChatRepository();
+      fakeRepository.onGetMessages = (agentId, conversationId) {
+        return [
+          Message(
+            id: 'msg-1',
+            text: 'Вопрос',
+            isFromUser: true,
+            timestamp: DateTime(2026, 1, 1),
+          ),
+          Message(
+            id: 'resp_1',
+            text: 'Ответ',
+            isFromUser: false,
+            timestamp: DateTime(2026, 1, 1, 0, 0, 1),
+          ),
+        ];
+      };
+      fakeRepository.onGetSources = (agentId, messageId) {
+        if (messageId == 'resp_1') {
+          return [const MessageSource(filename: 'a.pdf', order: 1)];
+        }
+        return const [];
+      };
+
+      final container = makeContainer(fakeRepository: fakeRepository);
+      addTearDown(container.dispose);
+
+      final notifier = container.read(chatProvider.notifier);
+
+      await notifier.loadChat('agentic_rag', 'chat-42', 'rag-1');
+
+      final state = container.read(chatProvider);
+
+      // У assistant-сообщения — sources.
+      final assistant = state.messages.firstWhere((m) => !m.isFromUser);
+      expect(assistant.sources, isNotNull);
+      expect(assistant.sources!.length, 1);
+      expect(assistant.sources!.first.filename, 'a.pdf');
+
+      // Сервис вызван (для одного assistant).
+      expect(fakeRepository.getSourcesCalls, 1);
     });
   });
 }
