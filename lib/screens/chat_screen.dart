@@ -218,82 +218,100 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           // ОСНОВНОЙ СПИСОК СООБЩЕНИЙ
           // ============================================================
           Expanded(
-            child: messages.isEmpty && isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    controller: _scrollController,
-                    reverse: true,
-                    padding: const EdgeInsets.all(8.0),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      // У нас `reverse: true` — значит, **index 0** это
-                      // **последнее** сообщение, а `messages.length - 1`
-                      // это **первое** (самое старое). «reversedIndex» —
-                      // это индекс в **обычном** массиве `messages`.
-                      final reversedIndex = messages.length - 1 - index;
-                      final message = messages[reversedIndex];
+            // **`SelectionArea`** — оборачиваем **весь** список сообщений.
+            //
+            // **Что** **это** **даёт**: **любой** **текст** **внутри** (`Text`,
+            // `MarkdownBody`, `RichText`) **можно** **выделить** **долгим** **тапом**
+            // и **скопировать**. **Одна** **обёртка** — **всё** **работает**.
+            //
+            // **Почему** **не** `SelectableText` **в** `MessageBubble`:
+            // - **`MessageBubble`** **содержит** **сложные** **виджеты**
+            //   (`MarkdownBody`, `MessageSources`, `AttachmentPreview`);
+            // - **`SelectionArea`** **делает** **выделяемыми** **все** **вложенные**
+            //   **виджеты** **сразу** — **меньше** **кода**, **единообразно**.
+            //
+            // **Про** `MarkdownBody` **и** `selectable`:
+            // - **если** `SelectionArea` **не** **работает** **с** `flutter_markdown_plus 1.0.7`
+            //   (**известная** **проблема** **версии** — **исправлено** **в** 1.0.10),
+            //   **добавим** `selectable: true` **в** `MessageMarkdown` **как** **fallback**.
+            child: SelectionArea(
+              child: messages.isEmpty && isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView.builder(
+                      controller: _scrollController,
+                      reverse: true,
+                      padding: const EdgeInsets.all(8.0),
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) {
+                        // У нас `reverse: true` — значит, **index 0** это
+                        // **последнее** сообщение, а `messages.length - 1`
+                        // это **первое** (самое старое). «reversedIndex» —
+                        // это индекс в **обычном** массиве `messages`.
+                        final reversedIndex = messages.length - 1 - index;
+                        final message = messages[reversedIndex];
 
-                      // **`isStreaming`** для этого сообщения — «идёт ли **сейчас**
-                      // стрим именно **этого** сообщения».
-                      //
-                      // **Что изменилось по сравнению с прошлой версией.** Раньше:
-                      // `chatState.isStreaming && !message.isFromUser && message.text.isEmpty`
-                      // — срабатывало **только** для **пустого** AI-сообщения (когда
-                      // показываем «typing indicator»). Но `MessageBubble` использует
-                      // `isStreaming` **ещё** и для **выбора** Text vs Markdown. С пустым
-                      // условием markdown рендерился **на каждой дельте** — тормоза.
-                      //
-                      // **Правильное условие** — «это **последнее** сообщение И идёт
-                      // стрим И это AI». Флаг `text.isEmpty` **больше** не нужен —
-                      // `MessageBubble` **сам** решает, показать точки (empty) или
-                      // Text (не empty). А **тип** рендера (Text vs Markdown) —
-                      // определяется `isStreaming`.
-                      //
-                      // **Проверка `reversedIndex == messages.length - 1`** — потому что
-                      // у нас `reverse: true`: **последнее** сообщение имеет
-                      // `reversedIndex == messages.length - 1` (это **индекс** в
-                      // **обычном** массиве).
-                      final bool isStreamingForThisMessage =
-                          chatState.isStreaming &&
-                          !message.isFromUser &&
-                          reversedIndex == messages.length - 1;
+                        // **`isStreaming`** для этого сообщения — «идёт ли **сейчас**
+                        // стрим именно **этого** сообщения».
+                        //
+                        // **Что изменилось по сравнению с прошлой версией.** Раньше:
+                        // `chatState.isStreaming && !message.isFromUser && message.text.isEmpty`
+                        // — срабатывало **только** для **пустого** AI-сообщения (когда
+                        // показываем «typing indicator»). Но `MessageBubble` использует
+                        // `isStreaming` **ещё** и для **выбора** Text vs Markdown. С пустым
+                        // условием markdown рендерился **на каждой дельте** — тормоза.
+                        //
+                        // **Правильное условие** — «это **последнее** сообщение И идёт
+                        // стрим И это AI». Флаг `text.isEmpty` **больше** не нужен —
+                        // `MessageBubble` **сам** решает, показать точки (empty) или
+                        // Text (не empty). А **тип** рендера (Text vs Markdown) —
+                        // определяется `isStreaming`.
+                        //
+                        // **Проверка `reversedIndex == messages.length - 1`** — потому что
+                        // у нас `reverse: true`: **последнее** сообщение имеет
+                        // `reversedIndex == messages.length - 1` (это **индекс** в
+                        // **обычном** массиве).
+                        final bool isStreamingForThisMessage =
+                            chatState.isStreaming &&
+                            !message.isFromUser &&
+                            reversedIndex == messages.length - 1;
 
-                      // Передаём `onRetry` **только** для **последнего**
-                      // сообщения. Для всех остальных — `null`.
-                      //
-                      // **Почему только последнего.** См. комментарий
-                      // в `_buildFailedContent`: кнопка вызывает
-                      // `retryLastMessage`, который **повторяет
-                      // последний** failed-ответ. Если бы `onRetry`
-                      // был у **каждого** failed-пузыря в истории,
-                      // нажатие на **старый** failed **вызвало бы**
-                      // повтор **последнего** — это **обман**
-                      // пользователя.
-                      //
-                      // **Проверка `index == 0`** (а не `messages.length - 1`)
-                      // — потому что `reverse: true`: **визуально**
-                      // сверху — **последнее** сообщение, оно
-                      // **первое** в `ListView.builder` (index 0).
-                      final bool isLastMessage = index == 0;
+                        // Передаём `onRetry` **только** для **последнего**
+                        // сообщения. Для всех остальных — `null`.
+                        //
+                        // **Почему только последнего.** См. комментарий
+                        // в `_buildFailedContent`: кнопка вызывает
+                        // `retryLastMessage`, который **повторяет
+                        // последний** failed-ответ. Если бы `onRetry`
+                        // был у **каждого** failed-пузыря в истории,
+                        // нажатие на **старый** failed **вызвало бы**
+                        // повтор **последнего** — это **обман**
+                        // пользователя.
+                        //
+                        // **Проверка `index == 0`** (а не `messages.length - 1`)
+                        // — потому что `reverse: true`: **визуально**
+                        // сверху — **последнее** сообщение, оно
+                        // **первое** в `ListView.builder` (index 0).
+                        final bool isLastMessage = index == 0;
 
-                      return MessageBubble(
-                        message: message,
-                        isStreaming: isStreamingForThisMessage,
-                        onRetry:
-                            isLastMessage &&
-                                message.status == MessageStatus.failed
-                            ? () {
-                                AppLogger.info(
-                                  'Повторить последнее failed-сообщение',
-                                );
-                                ref
-                                    .read(chatProvider.notifier)
-                                    .retryLastMessage();
-                              }
-                            : null,
-                      );
-                    },
-                  ),
+                        return MessageBubble(
+                          message: message,
+                          isStreaming: isStreamingForThisMessage,
+                          onRetry:
+                              isLastMessage &&
+                                  message.status == MessageStatus.failed
+                              ? () {
+                                  AppLogger.info(
+                                    'Повторить последнее failed-сообщение',
+                                  );
+                                  ref
+                                      .read(chatProvider.notifier)
+                                      .retryLastMessage();
+                                }
+                              : null,
+                        );
+                      },
+                    ),
+            ),
           ),
 
           // ============================================================

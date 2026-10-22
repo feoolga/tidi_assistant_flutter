@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'screens/splash_screen.dart';
 import 'theme/app_theme.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 void main() async {
   // Загружаем .env файл перед запуском приложения
@@ -21,6 +22,13 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       home: const SplashScreen(),
       debugShowCheckedModeBanner: false,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('ru'), Locale('en')],
+      locale: const Locale('ru'), // ← принудительно русский
     );
   }
 }
