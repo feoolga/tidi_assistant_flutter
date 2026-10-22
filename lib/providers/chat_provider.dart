@@ -18,6 +18,7 @@ import 'dart:async';
 import '../domain/models/message_source.dart';
 import '../domain/models/message_status.dart';
 import '../domain/services/chat_history_loader.dart';
+import '../domain/services/chat_message_sender.dart';
 
 // ============================================================
 // 1. СОСТОЯНИЕ ЧАТА
@@ -110,31 +111,32 @@ class ChatNotifier extends StateNotifier<ChatState> {
   final Ref _ref;
 
   final ChatRepository _repository;
-  final SendMessageUseCase _sendMessageUseCase;
-  final ChatStreamHandler _streamHandler;
 
-  /// Сервис **загрузки** **истории** **чата** (**вынесен** **из**
-  /// `ChatNotifier` **в** **Фазе** **2**).
+  /// Сервис **загрузки** **истории** **чата** (**Фаза** **2**).
   ///
   /// **Что** **делает**: **загружает** `messages` **и** (**для** **RAG**)
   /// **sources**. **Возвращает** `ChatHistoryLoadResult`.
+  final ChatHistoryLoader _historyLoader;
+
+  /// Сервис **отправки** **сообщений** (**Фаза** **2**).
+  ///
+  /// **Что** **делает**: **создаёт** `SendMessageParams`, **вызывает**
+  /// `SendMessageUseCase.execute`, **оборачивает** **поток** **через**
+  /// `ChatStreamHandler.handle`. **Возвращает** `Stream<ChatStreamEvent>`.
   ///
   /// **Почему** **не** **трогает** **state**: **сервис** **stateless**.
-  /// **State** — **здесь**, **в** `ChatNotifier`. **Разделение**
-  /// **ответственности**.
-  final ChatHistoryLoader _historyLoader;
+  /// **State** — **здесь**, **в** `ChatNotifier`.
+  final ChatMessageSender _messageSender;
 
   ChatNotifier({
     required Ref ref,
     required ChatRepository repository,
-    required SendMessageUseCase sendMessageUseCase,
-    required ChatStreamHandler streamHandler,
     required ChatHistoryLoader historyLoader,
+    required ChatMessageSender messageSender,
   }) : _ref = ref,
        _repository = repository,
-       _sendMessageUseCase = sendMessageUseCase,
-       _streamHandler = streamHandler,
        _historyLoader = historyLoader,
+       _messageSender = messageSender,
        super(ChatState.initial()) {
     _addWelcomeMessage();
   }
@@ -306,6 +308,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// черновик ввода. После успешной отправки — **очищаем** черновик:
   /// вложения «переехали» в `Message.attachments` пользовательского
   /// сообщения и остаются в истории чата.
+  ///
+  /// **Фаза 3.2 рефакторинга**: отправка делегирует
+  /// `ChatMessageSender.send` (HTTP + SSE). Здесь — только state
+  /// и обработка событий (`switch`).
   Future<void> sendMessage({required String text}) async {
     if (state.isLoading) {
       AppLogger.warning('Отправка уже в процессе — пропускаем повторный вызов');
@@ -313,8 +319,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
 
     // Берём текущий черновик вложений.
-    // **Копия** списка — потому что дальше мы можем очистить черновик,
-    // и оригинальный список не должен измениться.
     final attachments = List<Attachment>.from(
       _ref.read(attachmentDraftProvider).attachments,
     );
@@ -356,7 +360,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
           return;
         }
 
-        // Обычный новый чат: определяем агента и создаём чат.
         AppLogger.info('Новый чат — определяем агента через /route');
         currentAgentId = await _repository.getRoute(text);
 
@@ -367,17 +370,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
         );
         currentSessionId = session.id;
 
-        // Ищем человекочитаемое имя для UI.
-        // `agentsByIdProvider` — Map<String, Agent>, единый источник
-        // правды об агентах (приходят с бэкенда через /v1/models).
-        // Если агент ещё не загружен или не найден — `null`, UI покажет
-        // fallback «AI Ассистент».
         final displayName = _ref.read(agentsByIdProvider)[currentAgentId]?.name;
 
-        // Обновляем SSOT — sessionProvider.
-        // UI читает agentId/sessionId/agentDisplayName напрямую оттуда,
-        // поэтому agentId и sessionId здесь гарантированно non-null:
-        // getRoute возвращает String, ChatSession.id — String.
         _ref
             .read(sessionProvider.notifier)
             .setSession(
@@ -392,24 +386,27 @@ class ChatNotifier extends StateNotifier<ChatState> {
         );
       }
 
-      // 4–5. Отправка и обработка стрима — общий метод `_runStream`.
+      // 4. Запускаем стрим через сервис.
       //
-      // См. `_runStream`: он создаёт `SendMessageParams`, запускает
-      // `SendMessageUseCase.execute` + `ChatStreamHandler.handle`
-      // и прогоняет `await for` по событиям. Логика **идентична**
-      // той, что была здесь inline. Вынесена **только** для того,
-      // чтобы `retryLastMessage` мог использовать её повторно.
-      //
-      // `currentAgentId` и `currentSessionId` — гарантированно
-      // non-null к этому моменту (созданы на шагах 3).
+      // `_messageSender.send` возвращает `Stream<ChatStreamEvent>` —
+      // семантические события (Started/Delta/Completed/Failed).
+      // **Обрабатываем** их **здесь** (**state** **трогаем** **только** **мы**).
       final ragId = _ref.read(sessionProvider).ragId;
 
-      await _runStream(
+      final events = _messageSender.send(
         text: text,
         agentId: currentAgentId!,
         sessionId: currentSessionId,
         ragId: ragId,
         attachments: attachments,
+      );
+
+      // 5. Обработка событий стрима.
+      await _processStreamEvents(
+        events: events,
+        agentId: currentAgentId,
+        sessionId: currentSessionId,
+        ragId: ragId,
       );
     } catch (e, stackTrace) {
       final appException = ErrorHandler.handle(
@@ -431,51 +428,33 @@ class ChatNotifier extends StateNotifier<ChatState> {
   // ОБЩИЙ СТРИМ (sendMessage и retryLastMessage)
   // ============================================================
 
-  /// Запустить отправку сообщения и обработать SSE-стрим.
+  /// Обработать **поток** **семантических** **событий** **стрима**.
   ///
-  /// **Общий метод** для [sendMessage] и [retryLastMessage]. Логика
-  /// **идентична** той, что раньше была inline в [sendMessage]:
-  /// - создаёт [SendMessageParams];
-  /// - вызывает [SendMessageUseCase.execute];
-  /// - оборачивает в [ChatStreamHandler.handle];
-  /// - `await for` по событиям;
-  /// - на `ChatStreamCompleted` — обновляет последнее AI-сообщение,
-  ///   догружает sources (для RAG), очищает черновик вложений;
-  /// - на `ChatStreamFailed` — удаляет пустой AI-пузырь, ставит
-  ///   ошибку в state.
+  /// **Что** **делает**: **`switch`** **по** **событиям** **с** **обновлением**
+  /// **state**:
+  /// - `ChatStreamStarted` — **лог**;
+  /// - `ChatStreamDelta` — **обновление** **текста** **в** **последнем**
+  ///   **AI-сообщении**;
+  /// - `ChatStreamCompleted` — **финализация** (**текст**, `messageId`,
+  ///   **сессия**, **догрузка** **sources** **для** **RAG**, **очистка**
+  ///   **вложений**);
+  /// - `ChatStreamFailed` — **пометка** **пустого** **AI-пузыря**
+  ///   **как** `failed`.
   ///
-  /// **Чего метод НЕ делает:**
-  /// - не создаёт user-сообщение (это делает вызывающий код);
-  /// - не создаёт пустой AI-пузырь (тоже вызывающий код);
-  /// - не управляет `isLoading`/`isStreaming` — это тоже на вызывающем.
+  /// **Почему** **отдельный** **метод**: **та** **же** **логика**
+  /// **используется** **в** `sendMessage` **и** `retryLastMessage`.
+  /// **Дубль** `switch` **был** **бы** **~30** **строк** **в** **двух**
+  /// **местах** — **риск** **разъехаться**. **Один** **метод** — **один**
+  /// **источник** **правды**.
   ///
-  /// **Зачем разнесли.** Раньше вся логика жила в [sendMessage].
-  /// При добавлении [retryLastMessage] её пришлось бы **дублировать**
-  /// — а это **риск** разъехаться. Один общий метод — один источник
-  /// правды.
-  ///
-  /// **Почему `chatState.isStreaming` не трогаем внутри.** Флаг
-  /// `isStreaming` в state управляет UI (`TypingIndicator`). Ставим
-  /// его **вне** этого метода — вместе с `isLoading`, чтобы состояние
-  /// было согласованным (оба включились / оба выключились в `finally`).
-  Future<void> _runStream({
-    required String text,
+  /// **Почему** **не** **в** `ChatMessageSender`: **обновляет** **state**
+  /// (**это** **работа** `ChatNotifier`, **не** **сервиса**).
+  Future<void> _processStreamEvents({
+    required Stream<ChatStreamEvent> events,
     required String agentId,
-    required String? sessionId,
+    required String sessionId,
     required String? ragId,
-    required List<Attachment> attachments,
   }) async {
-    final params = SendMessageParams(
-      text: text,
-      agentId: agentId,
-      sessionId: sessionId,
-      ragId: ragId,
-      attachments: attachments,
-    );
-
-    final source = _sendMessageUseCase.execute(params);
-    final events = _streamHandler.handle(source);
-
     await for (final event in events) {
       switch (event) {
         case ChatStreamStarted():
@@ -492,8 +471,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           // Поле называется `agentId` (историческое имя), но по факту
           // содержит `model` из ответа сервера (`rag/<uuid>` для RAG,
           // `epoz` для обычных). Переименовываем в локальную переменную
-          // `modelFromResponse`, чтобы не путать с настоящим `agentId`
-          // для путей `/agents/{agentId}/...`.
+          // `modelFromResponse`.
           agentId: final modelFromResponse,
           :final conversationId,
         ):
@@ -519,6 +497,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
           AppLogger.debug('   📌 ID сообщения: $messageId');
           AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
 
+          // Догрузка sources — для RAG, если messageId пришёл.
+          // **Пока** **вызываем** **старый** `_loadSourcesForMessage`
+          // (для **одного** **сообщения**). **В** **Шаге** **3.3**
+          // **заменим** **на** **вызов** `_sourcesFetcher.fetchForMessage`.
           if (ragId != null && messageId != null && messageId.isNotEmpty) {
             unawaited(
               _loadSourcesForMessage(agentId: agentId, messageId: messageId),
@@ -529,74 +511,28 @@ class ChatNotifier extends StateNotifier<ChatState> {
           break;
 
         case ChatStreamFailed(:final error):
-          // Логирование **уже произошло** в `SendMessageUseCase`
-          // (для `event: error`) или в `ErrorHandler.handle` внутри
-          // `ChatStreamHandler` (для транспортных ошибок).
-          // Здесь — только UI-реакция.
-          //
-          // **Что делаем:** помечаем пустой AI-пузырь как `failed`.
-          // Пользователь видит «Не удалось получить ответ» **с**
-          // кнопкой «Повторить» **прямо в чате** — без SnackBar.
-          //
-          // **Почему НЕ `_removeEmptyAiMessageIfAny`.** Раньше
-          // удаляли пузырь — но тогда пользователь **терял**
-          // факт неудачной попытки (только SnackBar, который
-          // исчезает). Теперь пузырь **остаётся** — но с пометкой.
-          //
-          // **Почему НЕ `_setError`.** SnackBar **не** нужен:
-          // пометка **уже** в чате, пользователь её видит.
-          // Если поставить `_setError` — `ChatScreen` покажет
-          // **ещё и** SnackBar, получится **двойная** ошибка.
-          //
-          // **Почему `_markLastAiMessageAsFailed` безопасен.**
-          // Внутри есть **проверки**:
-          // - `isFromUser` — не трогаем user-сообщения;
-          // - `text.isNotEmpty` — не трогаем **частичные** ответы
-          //   (если стрим упал **после** получения нескольких токенов,
-          //   пользователь **уже** видит часть ответа — не надо
-          //   портить);
-          // - `status == failed` — не перезаписываем (иначе
-          //   потеряем `errorMessage` от **первой** ошибки).
           _markLastAiMessageAsFailed(error.userMessage);
-          // Черновик вложений НЕ очищаем — пользователь может
-          // попробовать снова.
           break;
       }
     }
   }
-
   // ============================================================
   // ПОВТОР ОТПРАВКИ (для failed-сообщений)
   // ============================================================
 
   /// Повторить последнее user-сообщение, если после него — failed-AI.
   ///
-  /// **Зачем нужен.** Если SSE-стрим оборвался (`client_disconnected`),
-  /// сервер сохраняет assistant-сообщение с `status: failed`
-  /// и **пустым** `text`. UI показывает пометку «Не удалось получить
-  /// ответ». Пользователь хочет **повторить** — эта функция делает
-  /// ровно это.
+  /// **Фаза 3.2 рефакторинга**: отправка делегирует
+  /// `ChatMessageSender.send` (как и в `sendMessage`).
+  /// Обработка событий — общий `_processStreamEvents`.
   ///
   /// **Логика:**
   /// 1. Найти индекс последнего **user**-сообщения (с конца).
   /// 2. Найти индекс последнего **assistant**-сообщения (после user).
-  /// 3. Проверить, что assistant — **failed**. Иначе — это **не**
-  ///    «повторить», а «странный вызов», тихо выходим.
-  /// 4. Заменить failed-пузырь на **пустой** `ok`-пузырь
-  ///    (text: '', status: ok) — так `MessageBubble` покажет
-  ///    `TypingIndicator`, а не старую ошибку.
-  /// 5. Запустить `_runStream` с **тем же** текстом user-сообщения.
-  ///
-  /// **Что **не** делает:**
-  /// - **не** создаёт **новое** user-сообщение (старое уже есть);
-  /// - **не** удаляет failed-пузырь (заменяет — чтобы не мигал UI);
-  /// - **не** работает для `document_chat` — у него **свой** механизм
-  ///   ретрая (`AttachmentDraftNotifier`), и там сообщения **не**
-  ///   имеют `status: failed` в БД.
-  ///
-  /// **Защита от дурака.** Если `state.isLoading` уже `true` —
-  /// выходим. Значит, пользователь нажал «Повторить» **во время**
-  /// другого стрима — это бессмысленно.
+  /// 3. Проверить, что assistant — **failed**. Иначе — тихо выходим.
+  /// 4. Заменить failed-пузырь на **пустой** `ok`-пузырь.
+  /// 5. Запустить `_messageSender.send` с **тем же** текстом
+  ///    user-сообщения и обработать события через `_processStreamEvents`.
   Future<void> retryLastMessage() async {
     if (state.isLoading) {
       AppLogger.warning('retryLastMessage: уже идёт отправка — пропускаем');
@@ -604,9 +540,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
 
     // 1. Найти последнее user-сообщение.
-    //
-    // Идём **с конца**, потому что `state.messages` растёт в конец.
-    // Индекс последнего user — начало «последнего хода».
     final messages = state.messages;
     int? userIndex;
     for (int i = messages.length - 1; i >= 0; i--) {
@@ -623,9 +556,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       return;
     }
 
-    // 2. Индекс assistant — следующий после user. У нас **один**
-    //    ход = user + assistant, поэтому это `userIndex + 1`.
-    //    На всякий случай проверяем, что assistant **есть**.
+    // 2. Индекс assistant — следующий после user.
     final assistantIndex = userIndex + 1;
     if (assistantIndex >= messages.length) {
       AppLogger.warning(
@@ -648,14 +579,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
 
     // 4. Заменить failed-пузырь на пустой ok-пузырь.
-    //
-    // Почему **заменяем**, а не **удаляем** + создаём заново:
-    // замена **атомарна** с точки зрения UI — не будет «мигания»
-    // (удаление + создание = два rebuild'а).
-    //
-    // `text: ''` + `status: ok` → `MessageBubble` покажет
-    // `TypingIndicator` (потому что `message.text.isEmpty`,
-    // а `isStreaming` придёт из `ChatState`).
     final emptyAi = failedMessage.copyWith(
       text: '',
       status: MessageStatus.ok,
@@ -680,20 +603,28 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final ragId = session.ragId;
 
       if (currentAgentId == null || currentSessionId == null) {
-        // Сессия потеряна — не можем повторить. Ставим ошибку.
         _setError('Не удалось повторить: сессия потеряна.');
         return;
       }
 
-      await _runStream(
+      // Запускаем стрим через сервис (как в `sendMessage`).
+      //
+      // **Вложения** для retry **не** передаём: если они были —
+      // пользователь уже отправил их, и повтор без файлов —
+      // корректное поведение (файлы уже на сервере).
+      final events = _messageSender.send(
         text: userText,
         agentId: currentAgentId,
         sessionId: currentSessionId,
         ragId: ragId,
-        // Вложения для retry **не** передаём: если они были —
-        // пользователь уже отправил их, и повтор без файлов —
-        // корректное поведение (файлы уже на сервере).
         attachments: const [],
+      );
+
+      await _processStreamEvents(
+        events: events,
+        agentId: currentAgentId,
+        sessionId: currentSessionId,
+        ragId: ragId,
       );
     } catch (e, stackTrace) {
       final appException = ErrorHandler.handle(
@@ -986,6 +917,25 @@ final chatHistoryLoaderProvider = Provider<ChatHistoryLoader>((ref) {
   return ChatHistoryLoader(repository: repository);
 });
 
+/// Провайдер для `ChatMessageSender`.
+///
+/// **Зависимости**:
+/// - `SendMessageUseCase` (HTTP + SSE);
+/// - `ChatStreamHandler` (парсинг событий).
+///
+/// **Кто** **читает**: `chatProvider` (**через** `ChatNotifier`).
+///
+/// **Фаза** **3.2** **рефакторинга**: сервис вынесен из `ChatNotifier`,
+/// провайдер — новый.
+final chatMessageSenderProvider = Provider<ChatMessageSender>((ref) {
+  final sendMessageUseCase = ref.read(sendMessageUseCaseProvider);
+  final streamHandler = ref.read(chatStreamHandlerProvider);
+  return ChatMessageSender(
+    sendMessageUseCase: sendMessageUseCase,
+    streamHandler: streamHandler,
+  );
+});
+
 /// Основной провайдер чата.
 ///
 /// **Зависимости:**
@@ -997,15 +947,13 @@ final chatHistoryLoaderProvider = Provider<ChatHistoryLoader>((ref) {
 /// управление вложениями переехало в `AttachmentDraftNotifier`.
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
   final repository = ref.read(chatRepositoryProvider);
-  final sendMessageUseCase = ref.read(sendMessageUseCaseProvider);
-  final streamHandler = ref.read(chatStreamHandlerProvider);
   final historyLoader = ref.read(chatHistoryLoaderProvider);
+  final messageSender = ref.read(chatMessageSenderProvider);
 
   return ChatNotifier(
     ref: ref,
     repository: repository,
-    sendMessageUseCase: sendMessageUseCase,
-    streamHandler: streamHandler,
     historyLoader: historyLoader,
+    messageSender: messageSender,
   );
 });
