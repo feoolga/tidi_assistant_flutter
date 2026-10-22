@@ -349,6 +349,90 @@ void main() {
   // ============================================================
 
   group('ChatNotifier.sendMessage', () {
+    // ============================================================
+    // ТЕСТ 11: sendMessage в RAG — догружает sources после стрима
+    // ============================================================
+    //
+    // **Зачем**: закрывает «дырку», найденную мутационным тестом.
+    // Если сломать `_fetchAndApplySourcesForMessage` (сделать пустым) —
+    // **этот** тест упадёт, потому что `getSourcesCalls` **не** станет 1.
+    //
+    // **Особенность**: загрузка sources — **fire-and-forget**
+    // (`unawaited`). Значит, **после** `sendMessage` она может **ещё**
+    // не выполниться. Ждём через `pumpEventQueue` (стандарт
+    // `flutter_test` для «дождаться microtask'ов»).
+    test('RAG: догружает sources после стрима', () async {
+      // 1. Готовим fakeRepository.
+      final fakeRepository = FakeChatRepository();
+      fakeRepository.onCreateConversation = (agentId, title, ragId) {
+        return ChatSession(
+          id: 'chat-1',
+          agentId: agentId,
+          title: title,
+          ragId: ragId, // ← важно: сохраняем ragId в сессии
+          createdAt: DateTime(2026, 1, 1),
+          updatedAt: DateTime(2026, 1, 1),
+        );
+      };
+      fakeRepository.onGetSources = (agentId, messageId) {
+        if (messageId == 'resp_rag_1') {
+          return [const MessageSource(filename: 'rag-source.pdf', order: 1)];
+        }
+        return const [];
+      };
+
+      // 2. Готовим fakeSender.
+      final fakeSender = FakeChatMessageSender();
+      fakeSender.onSend =
+          ({
+            required String text,
+            required String agentId,
+            required String? sessionId,
+            required String? ragId,
+            required List<Attachment> attachments,
+          }) {
+            return Stream.fromIterable([
+              const ChatStreamStarted(),
+              const ChatStreamCompleted(
+                fullText: 'Ответ',
+                messageId: 'resp_rag_1',
+                agentId: 'agentic_rag',
+                conversationId: 'chat-1',
+              ),
+            ]);
+          };
+
+      // 3. Создаём контейнер.
+      final container = makeContainer(
+        fakeRepository: fakeRepository,
+        fakeSender: fakeSender,
+      );
+      addTearDown(container.dispose);
+
+      // 4. Устанавливаем сессию с ragId — **иначе** `sendMessage`
+      //    пойдёт по ветке «новый чат» (без ragId), и sources
+      //    не будут загружаться.
+      container
+          .read(sessionProvider.notifier)
+          .setSession('agentic_rag', 'chat-1', ragId: 'rag-1');
+
+      // 5. Вызываем.
+      final notifier = container.read(chatProvider.notifier);
+      await notifier.sendMessage(text: 'вопрос');
+
+      // 6. Ждём завершения fire-and-forget (`unawaited`) —
+      //    `getSources` в `_fetchAndApplySourcesForMessage`.
+      await pumpEventQueue();
+
+      // 7. Проверки.
+      expect(fakeRepository.getSourcesCalls, 1);
+
+      final state = container.read(chatProvider);
+      final lastMessage = state.messages.last;
+      expect(lastMessage.sources, isNotNull);
+      expect(lastMessage.sources!.length, 1);
+      expect(lastMessage.sources!.first.filename, 'rag-source.pdf');
+    });
     test('ошибка /route: удаляет пустой AI-пузырь, ставит error', () async {
       final fakeRepository = FakeChatRepository();
       fakeRepository.onGetRoute = (message) {
