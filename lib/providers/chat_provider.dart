@@ -19,6 +19,7 @@ import '../domain/models/message_source.dart';
 import '../domain/models/message_status.dart';
 import '../domain/services/chat_history_loader.dart';
 import '../domain/services/chat_message_sender.dart';
+import '../domain/services/chat_sources_fetcher.dart';
 
 // ============================================================
 // 1. СОСТОЯНИЕ ЧАТА
@@ -92,9 +93,10 @@ class ChatState {
 ///
 /// **Ответственность:**
 /// - хранить историю сообщений;
-/// - отправлять сообщения через `SendMessageUseCase`;
+/// - отправлять сообщения через `ChatMessageSender`;
 /// - обрабатывать события стрима (Started / Delta / Completed / Failed);
-/// - загружать чат из истории (`loadChat`);
+/// - загружать чат из истории (`loadChat` через `ChatHistoryLoader`);
+/// - догружать sources (`ChatSourcesFetcher`);
 /// - очищать/создавать новый чат.
 ///
 /// **Что НЕ делает:**
@@ -114,8 +116,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   /// Сервис **загрузки** **истории** **чата** (**Фаза** **2**).
   ///
-  /// **Что** **делает**: **загружает** `messages` **и** (**для** **RAG**)
-  /// **sources**. **Возвращает** `ChatHistoryLoadResult`.
+  /// **Что** **делает**: **загружает** `messages`. **Возвращает**
+  /// `ChatHistoryLoadResult`.
+  ///
+  /// **Почему** **не** **трогает** **state**: **сервис** **stateless**.
+  /// **State** — **здесь**, **в** `ChatNotifier`. **Разделение**
+  /// **ответственности**.
   final ChatHistoryLoader _historyLoader;
 
   /// Сервис **отправки** **сообщений** (**Фаза** **2**).
@@ -128,15 +134,28 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// **State** — **здесь**, **в** `ChatNotifier`.
   final ChatMessageSender _messageSender;
 
+  /// Сервис **загрузки** **sources** (**Фаза** **2**).
+  ///
+  /// **Что** **делает**: **загружает** `sources` **для** **одного**
+  /// **сообщения** (**после** **стрима**) **или** **для** **многих**
+  /// (**история** **RAG-чата**). **Возвращает** `List<SourcesBatch>`
+  /// **или** `List<MessageSource>`.
+  ///
+  /// **Почему** **не** **трогает** **state**: **сервис** **stateless**.
+  /// **State** — **здесь**, **в** `ChatNotifier`.
+  final ChatSourcesFetcher _sourcesFetcher;
+
   ChatNotifier({
     required Ref ref,
     required ChatRepository repository,
     required ChatHistoryLoader historyLoader,
     required ChatMessageSender messageSender,
+    required ChatSourcesFetcher sourcesFetcher,
   }) : _ref = ref,
        _repository = repository,
        _historyLoader = historyLoader,
        _messageSender = messageSender,
+       _sourcesFetcher = sourcesFetcher,
        super(ChatState.initial()) {
     _addWelcomeMessage();
   }
@@ -498,12 +517,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
           AppLogger.debug('   📌 Длина текста: ${fullText.length} символов');
 
           // Догрузка sources — для RAG, если messageId пришёл.
-          // **Пока** **вызываем** **старый** `_loadSourcesForMessage`
-          // (для **одного** **сообщения**). **В** **Шаге** **3.3**
-          // **заменим** **на** **вызов** `_sourcesFetcher.fetchForMessage`.
+          //
+          // **Фаза 3.3 рефакторинга**: вызов сервиса
+          // `ChatSourcesFetcher.fetchForMessage` — вместо локального
+          // `_loadSourcesForMessage`.
           if (ragId != null && messageId != null && messageId.isNotEmpty) {
             unawaited(
-              _loadSourcesForMessage(agentId: agentId, messageId: messageId),
+              _fetchAndApplySourcesForMessage(
+                agentId: agentId,
+                messageId: messageId,
+              ),
             );
           }
 
@@ -516,6 +539,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
     }
   }
+
   // ============================================================
   // ПОВТОР ОТПРАВКИ (для failed-сообщений)
   // ============================================================
@@ -641,50 +665,88 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  /// Догрузить sources для последнего AI-сообщения.
+  // ============================================================
+  // ДОГРУЗКА SOURCES (для одного сообщения — после стрима)
+  // ============================================================
+
+  /// Загрузить sources **для** **одного** **сообщения** **и** **применить**
+  /// **к** **state**.
   ///
-  /// Вызывается **после** `ChatStreamCompleted`, **только** для RAG.
-  /// **Fire-and-forget**: не блокируем пользователя, ошибки логируем
-  /// и **не** показываем — sources вторичны, ответ уже получен.
-  Future<void> _loadSourcesForMessage({
+  /// **Когда** **вызывается**: **после** **стрима**
+  /// (`ChatStreamCompleted`), **если** **это** **RAG-чат**.
+  ///
+  /// **Что** **делает**:
+  /// 1. **Вызывает** `_sourcesFetcher.fetchForMessage` (**сервис**
+  ///    **загрузки**). **Ошибки** **логируются** **внутри** **сервиса**,
+  ///    **не** **пробрасываются** (**sources** **вторичны**).
+  /// 2. **Применяет** **через** `_updateSourcesForMessage` (**для**
+  ///    **одного** **сообщения**).
+  ///
+  /// **Fire-and-forget**: **не** **блокируем** **пользователя**.
+  /// **Ответ** **уже** **получен**, sources — **вторичны**.
+  Future<void> _fetchAndApplySourcesForMessage({
     required String agentId,
     required String messageId,
   }) async {
-    try {
-      final sources = await _repository.getSources(
-        agentId: agentId,
-        messageId: messageId,
-      );
+    final sources = await _sourcesFetcher.fetchForMessage(
+      agentId: agentId,
+      messageId: messageId,
+    );
 
-      if (sources.isEmpty) {
-        AppLogger.debug(
-          'Sources пусто для сообщения $messageId — оставляем как есть',
-        );
-        return;
-      }
-
-      // Обновляем последнее AI-сообщение — то, у которого id == messageId.
-      //
-      // Ищем **по** id, а не по «последнее AI» — потому что за время
-      // сетевого запроса пользователь мог отправить **новое** сообщение,
-      // и «последнее AI» станет **другим**. Ищем надёжно.
-      _updateSourcesForMessage(messageId: messageId, sources: sources);
-    } catch (e, stackTrace) {
-      // Sources — вторичные. Ошибку логируем, но **не** показываем
-      // пользователю и **не** роняем ход.
-      AppLogger.logException(
-        'Ошибка догрузки sources для сообщения $messageId',
-        e,
-        stackTrace,
-        {'agentId': agentId, 'messageId': messageId},
+    if (sources.isEmpty) {
+      AppLogger.debug(
+        'Sources пусто для сообщения $messageId — оставляем как есть',
       );
+      return;
     }
+
+    // **Применяем** **через** **отдельный** **метод** —
+    // **потому** **что** **у** **этого** **сценария** **своя** **логика**
+    // (**один** **messageId**, **поиск** **по** **индексу**).
+    //
+    // **Почему** **не** **объединяем** **с** `_applySourcesToMessages`:
+    // см. комментарий **к** `_updateSourcesForMessage`.
+    _updateSourcesForMessage(messageId: messageId, sources: sources);
   }
 
-  /// Обновить sources у сообщения с указанным id.
+  /// Обновить sources у **одного** сообщения с указанным id.
   ///
-  /// Если сообщения с таким id **нет** (например, пользователь уже
-  /// начал **новый** чат, или сообщение было удалено) — тихо выходим.
+  /// **Когда** **используется**: **после** **стрима** (**один**
+  /// `messageId`) — через `_fetchAndApplySourcesForMessage`.
+  ///
+  /// **Что** **делает**:
+  /// - **ищет** **индекс** **по** `id` **в** `state.messages`;
+  /// - **если** **не** **нашёл** — **тихо** **выходит** (**пользователь**
+  ///   **мог** **уже** **начать** **новый** **чат**, **или** **сообщение**
+  ///   **удалено**);
+  /// - **заменяет** **сообщение** **на** **копию** **с** `sources`;
+  /// - **обновляет** `state` **один** **раз** (**атомарно**).
+  ///
+  /// **Почему** **не** **объединяем** **с** `_applySourcesToMessages`:
+  ///
+  /// **Это** **два** **разных** **сценария**:
+  /// - **`_updateSourcesForMessage`** — **один** **messageId**, **известен**
+  ///   **заранее** (**после** **стрима**). **Логика**: **найти** **по**
+  ///   **индексу** **→** **заменить**.
+  /// - **`_applySourcesToMessages`** — **много** **messageId** (**история**).
+  ///   **Логика**: **пройти** **по** **всем** → **применить** **из** `Map`.
+  ///
+  /// **Почему** **не** **объединять** (**с** **учётом** **будущих** **фич**):
+  /// - **Кеширование**: **для** **истории** **sources** **могут** **прийти**
+  ///   **из** **кеша** (**устаревшие**), **понадобится** **валидация**
+  ///   (**например**, **скрыть**, **если** **документ** **удалён**).
+  ///   **Для** **стрима** — **sources** **всегда** **свежие** (**валидация**
+  ///   **не** **нужна**).
+  /// - **Авторизация**: **оба** **сценария** **работают** **с** **уже**
+  ///   **загруженными** **sources**, **но** **логика** **применения**
+  ///   **может** **разойтись** (**например**, **для** **истории** —
+  ///   **доп** **проверка** **доступа**).
+  /// - **Настройки** **UI**: **могут** **влиять** **на** **отображение**
+  ///   (**но** **это** **в** **UI**, **не** **в** `ChatNotifier`).
+  ///
+  /// **Дубль** **финальной** **строки** (`state = state.copyWith(...)`) —
+  /// **2** **строки** **на** **два** **метода**. **Это** **не** **дубль**
+  /// **логики**, **а** **неизбежная** **атомарная** **запись** **в** **state**.
   void _updateSourcesForMessage({
     required String messageId,
     required List<MessageSource> sources,
@@ -706,7 +768,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   /// Применить **батчи** sources к сообщениям в state.
   ///
-  /// **Откуда** **батчи**: `ChatHistoryLoader.load` вернул
+  /// **Когда** **используется**: **при** **загрузке** **истории**
+  /// **RAG-чата** (`loadChat`) — **для** **многих** **messageId**.
+  ///
+  /// **Откуда** **батчи**: `ChatSourcesFetcher.fetchForHistory` вернул
   /// `Map<messageId, List<MessageSource>>` — **только** для тех
   /// сообщений, у которых **есть** sources. **Порядок** **не** **важен**.
   ///
@@ -726,6 +791,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// - **не** перезаписывать существующие sources — «не трогай то,
   ///   что уже работает»;
   /// - **один** state — атомарное обновление.
+  ///
+  /// **Почему** **не** **объединяем** **с** `_updateSourcesForMessage`:
+  /// **два** **разных** **сценария** (**один** **vs** **много**),
+  /// **разная** **логика** (**поиск** **по** **индексу** **vs** **проход**
+  /// **по** **всем**), **разная** **расширяемость** (**см.** **комментарий**
+  /// **к** `_updateSourcesForMessage`).
   void _applySourcesToMessages(
     Map<String, List<MessageSource>> sourcesByMessageId,
   ) {
@@ -770,19 +841,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
   ///
   /// Загружает сообщения чата (и sources для RAG) и обновляет SSOT-сессию.
   ///
-  /// **Фаза 3.1 рефакторинга**: логика загрузки вынесена в
-  /// [ChatHistoryLoader]. Здесь — только применение к state + сессия.
+  /// **Фаза 3.1 рефакторинга**: логика загрузки messages вынесена в
+  /// [ChatHistoryLoader]. **Фаза 3.3**: sources — через
+  /// [ChatSourcesFetcher].
   ///
   /// **Что делает:**
-  /// 1. Загружает messages (и sources для RAG) через `_historyLoader.load`.
+  /// 1. Загружает messages через `_historyLoader.load`.
   /// 2. Применяет messages к state (`_setMessages`).
   /// 3. Получает displayName из `agentsByIdProvider` (Riverpod — не в сервисе).
   /// 4. Устанавливает сессию (`setSession`).
-  /// 5. Применяет sources к сообщениям (если RAG).
+  /// 5. Для RAG: загружает sources через `_sourcesFetcher.fetchForHistory`
+  ///    и применяет к state.
   ///
   /// **Что НЕ делает:**
-  /// - не ходит по HTTP напрямую — это в сервисе;
-  /// - не парсит ответы — это в сервисе;
+  /// - не ходит по HTTP напрямую — это в сервисах;
+  /// - не парсит ответы — это в сервисах;
   /// - не полагается на порядок sources — применяет по `messageId`.
   Future<void> loadChat(String agentId, String chatId, String? ragId) async {
     AppLogger.info('Загрузка чата: агент=$agentId, чат=$chatId, ragId=$ragId');
@@ -791,7 +864,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _clearError();
 
     try {
-      // 1. Загружаем messages + sources (если RAG) через сервис.
+      // 1. Загружаем messages через сервис.
       final result = await _historyLoader.load(
         agentId: agentId,
         chatId: chatId,
@@ -820,13 +893,43 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       AppLogger.info('Загружено сообщений: ${result.messages.length}');
 
-      // 5. Применяем sources к state (для RAG).
+      // 5. Для RAG — загружаем sources через сервис и применяем к state.
       //
-      // `_historyLoader` вернул **только** непустые батчи
-      // (`sourcesByMessageId` содержит **только** `messageId` с реальными
-      // sources). Остальным сообщениям `sources` **не трогаем**.
-      if (result.sourcesByMessageId.isNotEmpty) {
-        _applySourcesToMessages(result.sourcesByMessageId);
+      // **`await`** — ждём загрузки, потом применяем. Это **небольшая**
+      // задержка (~200 мс) — приемлемо (пользователь **видит** сообщения
+      // **уже**, sources — **догружаются** фоном).
+      //
+      // **Альтернатива** — `unawaited` (не ждать). Но тогда тесты
+      // сложнее (надо ждать «до применения sources»). С `await` —
+      // тест проще: после `loadChat` state уже с sources.
+      if (ragId != null) {
+        // **Собираем** `messageIds` **всех** **assistant-сообщений**
+        // **с** **непустым** **id** — **только** **у** **них** **есть**
+        // sources **на** **сервере**.
+        final messageIds = result.messages
+            .where((m) => !m.isFromUser && m.id.isNotEmpty)
+            .map((m) => m.id)
+            .toList();
+
+        if (messageIds.isNotEmpty) {
+          // **Параллельно** **загружаем** **sources** **для** **всех**
+          // **assistant-сообщений** (**через** **сервис**).
+          final batches = await _sourcesFetcher.fetchForHistory(
+            agentId: agentId,
+            messageIds: messageIds,
+          );
+
+          // **Превращаем** `List<SourcesBatch>` в
+          // `Map<messageId, List<MessageSource>>` — **единый** **формат**
+          // **для** `_applySourcesToMessages`.
+          final sourcesByMessageId = <String, List<MessageSource>>{
+            for (final batch in batches) batch.messageId: batch.sources,
+          };
+
+          if (sourcesByMessageId.isNotEmpty) {
+            _applySourcesToMessages(sourcesByMessageId);
+          }
+        }
       }
     } catch (e, stackTrace) {
       final appException = ErrorHandler.handle(
@@ -936,24 +1039,41 @@ final chatMessageSenderProvider = Provider<ChatMessageSender>((ref) {
   );
 });
 
+/// Провайдер для `ChatSourcesFetcher`.
+///
+/// **Зависимости**: `ChatRepository` (для HTTP).
+///
+/// **Кто** **читает**: `chatProvider` (**через** `ChatNotifier`).
+///
+/// **Фаза** **3.3** **рефакторинга**: сервис вынесен из `ChatNotifier`,
+/// провайдер — новый.
+final chatSourcesFetcherProvider = Provider<ChatSourcesFetcher>((ref) {
+  final repository = ref.read(chatRepositoryProvider);
+  return ChatSourcesFetcher(repository: repository);
+});
+
 /// Основной провайдер чата.
 ///
 /// **Зависимости:**
-/// - `chatRepositoryProvider` — репозиторий для отправки/загрузки;
-/// - `sendMessageUseCaseProvider` — UseCase отправки;
-/// - `chatStreamHandlerProvider` — обработчик событий стрима.
+/// - `chatRepositoryProvider` — репозиторий (для сервисов);
+/// - `chatHistoryLoaderProvider` — загрузка истории;
+/// - `chatMessageSenderProvider` — отправка сообщений;
+/// - `chatSourcesFetcherProvider` — загрузка sources.
 ///
-/// **Больше не зависит** от `uploadAttachmentUseCaseProvider` —
-/// управление вложениями переехало в `AttachmentDraftNotifier`.
+/// **Фаза** **3.3** **рефакторинга**: `ChatNotifier` **теперь** **тонкий**
+/// (~500 **строк** **вместо** ~700) — **логика** **в** **сервисах**.
+/// **State** — **здесь**, **в** `ChatNotifier`.
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
   final repository = ref.read(chatRepositoryProvider);
   final historyLoader = ref.read(chatHistoryLoaderProvider);
   final messageSender = ref.read(chatMessageSenderProvider);
+  final sourcesFetcher = ref.read(chatSourcesFetcherProvider);
 
   return ChatNotifier(
     ref: ref,
     repository: repository,
     historyLoader: historyLoader,
     messageSender: messageSender,
+    sourcesFetcher: sourcesFetcher,
   );
 });
