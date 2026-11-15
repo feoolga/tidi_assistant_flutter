@@ -283,7 +283,7 @@ class SendMessageUseCase {
             ),
           );
 
-          controller.close();
+          await controller.close();
           return;
         }
 
