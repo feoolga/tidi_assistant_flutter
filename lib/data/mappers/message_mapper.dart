@@ -5,28 +5,37 @@ import '../../domain/models/message.dart';
 import '../../domain/models/message_status.dart';
 import '../models/message_dto.dart';
 
-/// Маппер для преобразования MessageDto в доменную модель Message.
+/// Маппер `MessageDto` → `Message`.
 ///
-/// Отвечает за:
-/// - Преобразование данных из формата бэкенда в формат приложения.
-/// - **Перевод `status` (String) → `MessageStatus` (enum).**
-/// - Обеспечение целостности данных.
+/// **Ответственность:**
+/// - превратить `status` (строка) в `MessageStatus` (enum);
+/// - подставить `DateTime.now()` для `timestamp`, если сервер
+///   не прислал дату (или прислал невалидную);
+/// - переименовать `error` → `errorMessage` (граница слоёв:
+///   в DTO — зеркало JSON, в домене — смысловое имя).
+///
+/// **Что НЕ делает:**
+/// - не парсит JSON (это `MessageDto.fromJson`);
+/// - не ходит в сеть (это `ChatRepository`);
+/// - не решает, что показать пользователю (это UI).
 class MessageMapper {
-  /// Преобразует DTO в доменную модель.
+  /// Преобразовать DTO в доменную модель.
   ///
-  /// **Что делаем:**
-  /// 1. Парсим `status` (строка → enum). Незнакомое значение —
-  ///    fallback в `MessageStatus.ok` + warning в логе.
-  /// 2. Пробрасываем `error` из DTO в `errorMessage` домена
-  ///    (переименование «на границе»: DTO — зеркало JSON, домен —
-  ///    смысловое имя).
-  /// 3. Остальные поля — как есть.
+  /// **Про `timestamp`.** В DTO — `DateTime?` (может быть `null`, если
+  /// сервер не прислал `created_at` или прислал невалидное). В домене —
+  /// **non-null**. Подставляем `DateTime.now()` — осознанный fallback:
+  /// лучше показать «сейчас», чем уронить весь список сообщений
+  /// из-за одной кривой даты. Альтернатива (`DateTime(0)` = 1970)
+  /// пугает пользователя — для чата это плохо.
+  ///
+  /// **Про `status`.** См. `_parseStatus`. `null` и незнакомые значения
+  /// → `MessageStatus.ok` — безопасный дефолт.
   static Message toDomain(MessageDto dto) {
     return Message(
       id: dto.id,
       text: dto.text,
       isFromUser: dto.isFromUser,
-      timestamp: dto.timestamp,
+      timestamp: dto.timestamp ?? DateTime.now(),
       agentId: dto.agentId,
       sessionId: dto.sessionId,
       sources: dto.sources,
@@ -42,21 +51,17 @@ class MessageMapper {
 
   /// Превратить строковый статус в [MessageStatus].
   ///
-  /// Ожидаемые значения (см. README Agentic RAG, раздел
-  /// `GET .../messages`):
-  /// - `"ok"` → [MessageStatus.ok];
-  /// - `"failed"` → [MessageStatus.failed];
-  /// - `"pending"` → [MessageStatus.pending].
+  /// Ожидаемые значения: `"ok"`, `"failed"`, `"pending"`.
   ///
   /// **`null` → `MessageStatus.ok`.** Это **безопасный дефолт**:
-  /// `document_chat` **не** присылает `status` (у него своя схема) —
-  /// все его сообщения по факту `ok`. Для `agentic_rag` `status`
-  /// **всегда** приходит, но и здесь `null` не сломает.
+  /// `document_chat` **не** присылает `status` в истории — все его
+  /// сообщения по факту `ok`. Для `agentic_rag` `status` **всегда**
+  /// приходит, но и здесь `null` не сломает.
   ///
   /// **Незнакомое значение → `MessageStatus.ok` + warning.** Возможно,
-  /// бекендер добавил новый статус (например, `"cancelled"`) — мы
+  /// бэкендер добавил новый статус (например, `"cancelled"`) — мы
   /// **не** падаем и **не** теряем сообщение, но **сигналим** в лог.
-  /// Если такое начнёт повторяться — увидим и добавим case.
+  /// Если такое начнёт повторяться — увидим и добавим `case`.
   static MessageStatus _parseStatus(String? raw) {
     switch (raw) {
       case 'ok':
