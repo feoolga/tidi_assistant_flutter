@@ -384,7 +384,7 @@ class _MessageInputState extends ConsumerState<MessageInput> {
           // Небольшой отступ сверху, чтобы крестик удаления не резался.
           padding: const EdgeInsets.only(top: 8),
           itemCount: draftState.attachments.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          separatorBuilder: (_, _) => const SizedBox(width: 8),
           itemBuilder: (context, index) {
             final attachment = draftState.attachments[index];
             return AttachmentPreview(

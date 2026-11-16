@@ -92,7 +92,7 @@ class AttachmentPreview extends StatelessWidget {
           image: FileImage(File(attachment.localPath)),
           fit: BoxFit.cover,
           // Если файл удалён или недоступен — молча покажем фон.
-          onError: (_, __) {},
+          onError: (_, _) {},
         ),
       ),
     );
