@@ -68,9 +68,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       await Future.delayed(const Duration(milliseconds: 1500));
 
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const ChatScreen()),
+        unawaited(
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const ChatScreen()),
+          ),
         );
       }
     } catch (e, stackTrace) {
@@ -89,9 +91,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       await Future.delayed(const Duration(seconds: 2));
 
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const ChatScreen()),
+        unawaited(
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const ChatScreen()),
+          ),
         );
       }
     }
