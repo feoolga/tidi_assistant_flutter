@@ -9,7 +9,7 @@ import '../core/logger/app_logger.dart';
 /// Хелпер для выбора файлов через системный диалог.
 ///
 /// Обёртка над `file_picker` — знает, какие форматы разрешены
-/// (см. `AppConfig.documentChatAllowedFileExtensions`), как открыть диалог,
+/// (см. `AppConfig.allowedFileExtensions`), как открыть диалог,
 /// и как обработать результат.
 ///
 /// Отдельный класс, а не функция внутри виджета, — чтобы UI не знал
