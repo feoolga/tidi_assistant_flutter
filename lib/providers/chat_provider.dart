@@ -15,6 +15,7 @@ import '../domain/usecases/send_message_usecase.dart';
 import 'agent_provider.dart';
 import 'attachment_draft_provider.dart';
 import 'session_provider.dart';
+import 'chat_list_provider.dart';
 import '../domain/models/message_source.dart';
 import '../domain/models/message_status.dart';
 import '../domain/services/chat_history_loader.dart';
@@ -399,6 +400,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
               currentSessionId,
               agentDisplayName: displayName,
             );
+
+        // Инвалидируем `chatsProvider` — новый чат должен появиться
+        // в истории. Без этого список обновляется только вручную
+        // (свайп в drawer) или после переименования/удаления.
+        //
+        // **Почему здесь, а не в `ChatHistoryDrawer`:** создание чата —
+        // это доменное событие (новый чат появился на сервере), а не
+        // UI-событие. `chatsProvider` — это кэш списка чатов, и он
+        // должен инвалидироваться **там**, где происходит изменение.
+        //
+        // TODO: `chatsProvider` сейчас грузит агентов последовательно,
+        // и если один агент висит (например, `epoz` отключён на бэкенде) —
+        // список обновляется с задержкой ~10 секунд. Это будет
+        // исправлено отдельно (параллельная загрузка + timeout).
+        _ref.invalidate(chatsProvider);
 
         AppLogger.info(
           'Чат создан: agent=$currentAgentId, session=$currentSessionId, '
