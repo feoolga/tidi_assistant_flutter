@@ -1,0 +1,31 @@
+Analyzing tidi_assistant_flutter...                             
+
+   info • Use 'const' with the constructor to improve performance • lib/core/errors/business_exceptions.dart:36:12 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • lib/core/errors/business_exceptions.dart:83:12 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • lib/core/errors/file_exceptions.dart:163:12 • prefer_const_constructors
+   info • Use 'const' for final variables initialized to a constant value • lib/core/logger/app_logger.dart:116:5 • prefer_const_declarations
+   info • Use 'const' with the constructor to improve performance • lib/screens/splash_screen.dart:199:19 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • lib/screens/splash_screen.dart:202:28 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • lib/screens/splash_screen.dart:203:35 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • lib/widgets/chat_history_drawer.dart:55:25 • prefer_const_constructors
+   info • Missing an 'await' for the 'Future' computed by this expression • lib/widgets/chat_history_drawer.dart:366:5 • unawaited_futures
+   info • Use 'const' with the constructor to improve performance • lib/widgets/message_bubble.dart:256:9 • prefer_const_constructors
+   info • Use 'const' literals as arguments to constructors of '@immutable' classes • lib/widgets/message_bubble.dart:258:21 • prefer_const_literals_to_create_immutables
+   info • Use 'const' with the constructor to improve performance • lib/widgets/message_bubble.dart:259:13 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • lib/widgets/message_bubble.dart:266:13 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • lib/widgets/message_bubble.dart:267:22 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • lib/widgets/message_bubble.dart:270:24 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • lib/widgets/message_sources.dart:72:13 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/core/errors/error_handler_test.dart:86:23 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/core/errors/error_handler_test.dart:143:21 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/domain/models/chat_session_test.dart:57:23 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/domain/models/chat_session_test.dart:70:23 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/domain/models/chat_session_test.dart:86:23 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/domain/models/rag_config_test.dart:66:22 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/domain/models/rag_config_test.dart:70:22 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/domain/models/rag_config_test.dart:82:22 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/domain/models/rag_config_test.dart:86:22 • prefer_const_constructors
+   info • Use 'const' with the constructor to improve performance • test/domain/services/chat_stream_handler_test.dart:186:22 • prefer_const_constructors
+   info • The imported package 'fake_async' isn't a dependency of the importing package • test/domain/usecases/watch_rag_readiness_usecase_test.dart:3:8 • depend_on_referenced_packages
+
+27 issues found. (ran in 1.0s)
