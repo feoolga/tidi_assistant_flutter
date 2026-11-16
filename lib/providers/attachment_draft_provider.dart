@@ -407,24 +407,6 @@ class AttachmentDraftNotifier extends StateNotifier<AttachmentDraftState> {
 // 3. ПРОВАЙДЕР
 // ============================================================
 
-/// Провайдер для черновика вложений.
-///
-/// Читается:
-/// - `MessageInput` — для отображения превью и кнопки «прикрепить»;
-/// - `ChatNotifier` — для взятия вложений при отправке сообщения;
-/// - `ChatScreen` — для показа ошибок/подсказок через SnackBar.
-/// Провайдер для `UploadAttachmentUseCase`.
-///
-/// **Живёт здесь, а не в `chat_provider.dart`.** Причина: этот UseCase
-/// относится к **вложениям**, а не к чату. После разделения состояния
-/// (ChatState vs AttachmentDraftState) логика вложений переехала сюда —
-/// и провайдеры тоже.
-///
-/// **Пока** (шаг B1) в `chat_provider.dart` **всё ещё** объявлен
-/// такой же провайдер. Это **временное** состояние: между B1 и B2
-/// оба файла имеют свои `uploadAttachmentUseCaseProvider`. Конфликта
-/// нет, потому что никто не импортирует оба файла одновременно.
-/// В шаге B2 из `chat_provider.dart` провайдер будет удалён.
 final uploadAttachmentUseCaseProvider = Provider<UploadAttachmentUseCase>((
   ref,
 ) {

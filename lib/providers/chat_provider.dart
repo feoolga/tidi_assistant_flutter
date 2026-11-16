@@ -1,5 +1,6 @@
 // lib/providers/chat_provider.dart
 
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/errors/error_handler.dart';
@@ -14,7 +15,6 @@ import '../domain/usecases/send_message_usecase.dart';
 import 'agent_provider.dart';
 import 'attachment_draft_provider.dart';
 import 'session_provider.dart';
-import 'dart:async';
 import '../domain/models/message_source.dart';
 import '../domain/models/message_status.dart';
 import '../domain/services/chat_history_loader.dart';
