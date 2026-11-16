@@ -21,7 +21,8 @@ import '../models/rag_set.dart';
 /// - не хранит историю обновлений — только **последнее** состояние.
 ///
 /// **Таймаут.** Если за [AppConfig.ragPollTimeout] готовность не
-/// наступила — кидает [RagException] в стрим и закрывает его.
+/// наступила — эмитит ошибку в стрим (через `ErrorHandler.handle`,
+/// тип — `AppException`) и закрывает его.
 ///
 /// **Отмена.** Если клиент отписался — таймер отменяется,
 /// контроллер закрывается. Без утечек.
@@ -38,6 +39,14 @@ class WatchRagReadinessUseCase {
     final startedAt = DateTime.now();
     bool isClosed = false;
 
+    // Флаг-«замок» (mutex). Гарантирует, что в один момент времени
+    // работает только ОДИН `poll()`. Без него `Timer.periodic` может
+    // запустить второй `poll()`, пока первый ещё ждёт `get()`.
+    // Если ответы придут в обратном порядке — «старый» попытается
+    // `add` в уже закрытый контроллер → «Cannot add event after
+    // closing».
+    bool isPolling = false;
+
     void close({Object? error, StackTrace? stackTrace}) {
       if (isClosed) return;
       isClosed = true;
@@ -49,6 +58,15 @@ class WatchRagReadinessUseCase {
     }
 
     Future<void> poll() async {
+      // Замок: если предыдущий `poll()` ещё идёт — выходим сразу.
+      if (isPolling) {
+        AppLogger.debug(
+          'WatchRagReadiness: предыдущий poll ещё идёт — пропускаем',
+        );
+        return;
+      }
+      isPolling = true;
+
       try {
         // Проверяем таймаут ДО запроса.
         if (DateTime.now().difference(startedAt) > AppConfig.ragPollTimeout) {
@@ -74,6 +92,10 @@ class WatchRagReadinessUseCase {
         }
       } catch (e, stackTrace) {
         close(error: e, stackTrace: stackTrace);
+      } finally {
+        // Снимаем замок ВСЕГДА — даже если была ошибка.
+        // Иначе после первой ошибки polling «залипнет» навсегда.
+        isPolling = false;
       }
     }
 
