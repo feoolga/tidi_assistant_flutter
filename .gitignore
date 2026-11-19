@@ -53,3 +53,7 @@ app.*.map.json
 secrets/
 android/local.properties
 ios/Pods/
+
+# Aurora OS: генерируются тулингом при каждой сборке
+aurora/rpm/defines.inc
+aurora/rpm/requires.inc
