@@ -439,7 +439,7 @@ class AppHttpClient {
       // Единая проверка статуса для всех обычных методов.
       _throwIfError(response);
 
-      return response;
+      return _fixEncoding(response);
     } on TimeoutException catch (e, stackTrace) {
       AppLogger.error('Таймаут $method-запроса: $path', e, stackTrace);
       throw NetworkException.timeout(e);
@@ -545,5 +545,27 @@ class AppHttpClient {
     }
 
     return headers;
+  }
+
+  /// Приводит кодировку тела ответа к UTF-8.
+  ///
+  /// Пакет `http` декодирует `body` по Content-Type: если сервер не указал
+  /// `charset` (наш бэкенд не указывает), по умолчанию берётся latin1 —
+  /// и русские буквы превращаются в «D±...». Явно декодируем байты как
+  /// UTF-8 и пересобираем ответ с явным charset=utf-8.
+  http.Response _fixEncoding(http.Response response) {
+    final contentType = response.headers['content-type'] ?? '';
+    if (contentType.contains('charset=')) return response;
+
+    final fixedContentType = contentType.isEmpty
+        ? 'application/json; charset=utf-8'
+        : '$contentType; charset=utf-8';
+
+    final headers = Map<String, String>.from(response.headers)
+      ..['content-type'] = fixedContentType;
+
+    final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+
+    return http.Response(body, response.statusCode, headers: headers);
   }
 }
