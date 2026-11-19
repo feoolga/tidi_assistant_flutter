@@ -33,3 +33,9 @@ flutter:
     - .env
     - assets/images/logo.svg
   uses-material-design: true
+
+dependency_overrides:
+  file_picker:
+    git:
+      url: https://hub.mos.ru/auroraos/flutter/flutter-community-plugins/file-picker.git
+      ref: 5c062b38cbc6a830fd1580fc439b766d2f1e6795
