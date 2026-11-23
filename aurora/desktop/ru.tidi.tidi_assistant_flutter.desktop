@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=TiDi Assistant
+Name[ru]=ТиДи Ассистент
+Comment=A new Flutter project.
+Icon=ru.tidi.tidi_assistant_flutter
+Exec=/usr/bin/ru.tidi.tidi_assistant_flutter
+X-Nemo-Application-Type=silica-qt5
+
+[X-Application]
+Permissions=UserDirs
+OrganizationName=ru.tidi
+ApplicationName=tidi_assistant_flutter
